@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::Local;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -295,6 +295,51 @@ impl App {
             }
         }
         format!("CH#{}", ch)
+    }
+
+    /// Apply a key press; returns the input line when Enter submits it
+    fn handle_key(&mut self, key: KeyEvent) -> Option<String> {
+        match key.code {
+            KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+            }
+            KeyCode::Enter if !self.input.is_empty() => return Some(self.input.take()),
+            KeyCode::Char(c) => self.input.insert(c),
+            KeyCode::Backspace => self.input.backspace(),
+            KeyCode::Left => self.input.left(),
+            KeyCode::Right => self.input.right(),
+            KeyCode::Home => self.input.home(),
+            KeyCode::End => self.input.end(),
+            KeyCode::Tab => {
+                self.panel = match self.panel {
+                    Panel::Messages => Panel::Contacts,
+                    Panel::Contacts => Panel::Packets,
+                    Panel::Packets => Panel::Messages,
+                };
+            }
+            KeyCode::Up if self.panel == Panel::Contacts => {
+                if let Some(s) = self.selected_contact {
+                    if s > 0 {
+                        self.selected_contact = Some(s - 1);
+                    }
+                } else if !self.contacts.is_empty() {
+                    self.selected_contact = Some(0);
+                }
+            }
+            KeyCode::Down if self.panel == Panel::Contacts => {
+                if let Some(s) = self.selected_contact {
+                    if s + 1 < self.contacts.len() {
+                        self.selected_contact = Some(s + 1);
+                    }
+                } else if !self.contacts.is_empty() {
+                    self.selected_contact = Some(0);
+                }
+            }
+            KeyCode::F(1) => self.selected_contact = None,
+            _ => {}
+        }
+        None
     }
 
     fn resolve_sender(&self, prefix: &[u8; 6]) -> String {
@@ -1343,63 +1388,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if event::poll(Duration::from_millis(50))? {
             if let CEvent::Key(key) = event::read()? {
-                let mut a = app.lock().await;
-                match key.code {
-                    KeyCode::Esc => {
-                        a.should_quit = true;
+                let submitted = app.lock().await.handle_key(key);
+                if let Some(text) = submitted {
+                    if text.starts_with('/') {
+                        handle_command(&text, &app, mc.as_ref()).await;
+                    } else if let Some(ref mc) = mc {
+                        send_message(mc, &app, &text).await;
+                    } else {
+                        app.lock().await.err("Not connected");
                     }
-                    KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
-                        a.should_quit = true;
-                    }
-                    KeyCode::Enter => {
-                        if !a.input.is_empty() {
-                            let text = a.input.take();
-                            drop(a);
-
-                            if text.starts_with('/') {
-                                handle_command(&text, &app, mc.as_ref()).await;
-                            } else if let Some(ref mc) = mc {
-                                send_message(mc, &app, &text).await;
-                            } else {
-                                app.lock().await.err("Not connected");
-                            }
-                        }
-                    }
-                    KeyCode::Char(c) => a.input.insert(c),
-                    KeyCode::Backspace => a.input.backspace(),
-                    KeyCode::Left => a.input.left(),
-                    KeyCode::Right => a.input.right(),
-                    KeyCode::Home => a.input.home(),
-                    KeyCode::End => a.input.end(),
-                    KeyCode::Tab => {
-                        a.panel = match a.panel {
-                            Panel::Messages => Panel::Contacts,
-                            Panel::Contacts => Panel::Packets,
-                            Panel::Packets => Panel::Messages,
-                        };
-                    }
-                    KeyCode::Up if a.panel == Panel::Contacts => {
-                        if let Some(s) = a.selected_contact {
-                            if s > 0 {
-                                a.selected_contact = Some(s - 1);
-                            }
-                        } else if !a.contacts.is_empty() {
-                            a.selected_contact = Some(0);
-                        }
-                    }
-                    KeyCode::Down if a.panel == Panel::Contacts => {
-                        if let Some(s) = a.selected_contact {
-                            if s + 1 < a.contacts.len() {
-                                a.selected_contact = Some(s + 1);
-                            }
-                        } else if !a.contacts.is_empty() {
-                            a.selected_contact = Some(0);
-                        }
-                    }
-                    KeyCode::F(1) => {
-                        a.selected_contact = None;
-                    }
-                    _ => {}
                 }
             }
         }
@@ -1585,6 +1582,114 @@ mod tests {
         assert_eq!(line.take(), "héllo");
         assert!(line.is_empty());
         assert_eq!(line.cursor, 0);
+    }
+
+    // ── Key handling ─────────────────────────────────────────────────────────
+
+    fn press(app: &mut App, code: KeyCode) -> Option<String> {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn app_with_contacts(n: u8) -> App {
+        let mut app = App::new(0);
+        for i in 0..n {
+            app.contacts.push(contact(&format!("c{}", i), [i + 1; 6]));
+        }
+        app
+    }
+
+    #[test]
+    fn esc_quits() {
+        let mut app = App::new(0);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn ctrl_c_quits_without_typing() {
+        let mut app = App::new(0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.should_quit);
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn typing_edits_the_input_line() {
+        let mut app = App::new(0);
+        for c in "hi!".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Backspace);
+        press(&mut app, KeyCode::Home);
+        press(&mut app, KeyCode::Char('>'));
+        assert_eq!(app.input.as_str(), ">hi");
+    }
+
+    #[test]
+    fn enter_submits_and_clears_input() {
+        let mut app = App::new(0);
+        press(&mut app, KeyCode::Char('x'));
+        assert_eq!(press(&mut app, KeyCode::Enter), Some("x".to_string()));
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn enter_on_empty_input_submits_nothing() {
+        assert_eq!(press(&mut App::new(0), KeyCode::Enter), None);
+    }
+
+    #[test]
+    fn tab_cycles_panels() {
+        let mut app = App::new(0);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.panel, Panel::Contacts);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.panel, Panel::Packets);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.panel, Panel::Messages);
+    }
+
+    #[test]
+    fn arrows_select_contacts_only_in_contacts_panel() {
+        let mut app = app_with_contacts(3);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.selected_contact, None);
+        app.panel = Panel::Contacts;
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.selected_contact, Some(0));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.selected_contact, Some(2));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.selected_contact, Some(0));
+    }
+
+    #[test]
+    fn up_with_no_selection_selects_first_contact() {
+        let mut app = app_with_contacts(2);
+        app.panel = Panel::Contacts;
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.selected_contact, Some(0));
+    }
+
+    #[test]
+    fn arrows_with_no_contacts_select_nothing() {
+        let mut app = App::new(0);
+        app.panel = Panel::Contacts;
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.selected_contact, None);
+    }
+
+    #[test]
+    fn f1_clears_contact_selection() {
+        let mut app = app_with_contacts(1);
+        app.selected_contact = Some(0);
+        press(&mut app, KeyCode::F(1));
+        assert_eq!(app.selected_contact, None);
     }
 
     // ── App labels ───────────────────────────────────────────────────────────
