@@ -55,6 +55,78 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
     result
 }
 
+/// Single-line text input with a cursor measured in chars
+#[derive(Debug, Default)]
+struct InputLine {
+    text: String,
+    cursor: usize,
+}
+
+impl InputLine {
+    fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    fn char_count(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    /// Byte offset of the char at `char_idx` (or the end of the text)
+    fn byte_offset(&self, char_idx: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len())
+    }
+
+    fn insert(&mut self, c: char) {
+        let at = self.byte_offset(self.cursor);
+        self.text.insert(at, c);
+        self.cursor += 1;
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            let at = self.byte_offset(self.cursor);
+            self.text.remove(at);
+        }
+    }
+
+    fn left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn right(&mut self) {
+        self.cursor = (self.cursor + 1).min(self.char_count());
+    }
+
+    fn home(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn end(&mut self) {
+        self.cursor = self.char_count();
+    }
+
+    /// Return the text and clear the line
+    fn take(&mut self) -> String {
+        self.cursor = 0;
+        std::mem::take(&mut self.text)
+    }
+
+    /// Display width of the text before the cursor
+    fn cursor_column(&self) -> u16 {
+        let before = &self.text[..self.byte_offset(self.cursor)];
+        UnicodeWidthStr::width(before) as u16
+    }
+}
+
 /// Stored channel info
 #[derive(Clone, Debug)]
 struct ChannelEntry {
@@ -134,8 +206,7 @@ enum Panel {
 }
 
 struct App {
-    input: String,
-    cursor: usize,
+    input: InputLine,
     panel: Panel,
     messages: Vec<ChatMessage>,
     contacts: Vec<Contact>,
@@ -157,8 +228,7 @@ struct App {
 impl App {
     fn new(channel: u8) -> Self {
         Self {
-            input: String::new(),
-            cursor: 0,
+            input: InputLine::default(),
             panel: Panel::Messages,
             messages: Vec::new(),
             contacts: Vec::new(),
@@ -1217,7 +1287,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
                 .border_style(Style::default().fg(Color::Cyan)),
         );
     f.render_widget(w, area);
-    f.set_cursor_position((area.x + app.cursor as u16 + 1, area.y + 1));
+    f.set_cursor_position((area.x + app.input.cursor_column() + 1, area.y + 1));
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -1283,9 +1353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Enter => {
                         if !a.input.is_empty() {
-                            let text = a.input.clone();
-                            a.input.clear();
-                            a.cursor = 0;
+                            let text = a.input.take();
                             drop(a);
 
                             if text.starts_with('/') {
@@ -1297,26 +1365,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    KeyCode::Char(c) => {
-                        let pos = a.cursor;
-                        a.input.insert(pos, c);
-                        a.cursor += 1;
-                    }
-                    KeyCode::Backspace => {
-                        if a.cursor > 0 {
-                            let pos = a.cursor - 1;
-                            a.input.remove(pos);
-                            a.cursor -= 1;
-                        }
-                    }
-                    KeyCode::Left => {
-                        a.cursor = a.cursor.saturating_sub(1);
-                    }
-                    KeyCode::Right => {
-                        a.cursor = (a.cursor + 1).min(a.input.len());
-                    }
-                    KeyCode::Home => a.cursor = 0,
-                    KeyCode::End => a.cursor = a.input.len(),
+                    KeyCode::Char(c) => a.input.insert(c),
+                    KeyCode::Backspace => a.input.backspace(),
+                    KeyCode::Left => a.input.left(),
+                    KeyCode::Right => a.input.right(),
+                    KeyCode::Home => a.input.home(),
+                    KeyCode::End => a.input.end(),
                     KeyCode::Tab => {
                         a.panel = match a.panel {
                             Panel::Messages => Panel::Contacts,
@@ -1449,6 +1503,88 @@ mod tests {
     fn truncate_counts_display_columns_not_chars() {
         // Each CJK char is two columns wide; a third would exceed 5 columns.
         assert_eq!(truncate_to_width("日本語", 5), "日本");
+    }
+
+    // ── InputLine ────────────────────────────────────────────────────────────
+
+    fn typed(s: &str) -> InputLine {
+        let mut line = InputLine::default();
+        for c in s.chars() {
+            line.insert(c);
+        }
+        line
+    }
+
+    #[test]
+    fn input_insert_appends_at_cursor() {
+        let mut line = typed("ac");
+        line.left();
+        line.insert('b');
+        assert_eq!(line.as_str(), "abc");
+        assert_eq!(line.cursor, 2);
+    }
+
+    #[test]
+    fn input_backspace_removes_char_before_cursor() {
+        let mut line = typed("abc");
+        line.left();
+        line.backspace();
+        assert_eq!(line.as_str(), "ac");
+        assert_eq!(line.cursor, 1);
+    }
+
+    #[test]
+    fn input_backspace_at_start_does_nothing() {
+        let mut line = typed("ab");
+        line.home();
+        line.backspace();
+        assert_eq!(line.as_str(), "ab");
+        assert_eq!(line.cursor, 0);
+    }
+
+    #[test]
+    fn input_cursor_movement_is_clamped() {
+        let mut line = typed("ab");
+        line.right();
+        assert_eq!(line.cursor, 2);
+        line.home();
+        line.left();
+        assert_eq!(line.cursor, 0);
+        line.end();
+        assert_eq!(line.cursor, 2);
+    }
+
+    #[test]
+    fn input_edits_multibyte_text_without_panicking() {
+        let mut line = typed("héllo");
+        line.home();
+        line.right();
+        line.right();
+        line.backspace();
+        assert_eq!(line.as_str(), "hllo");
+        line.insert('ë');
+        assert_eq!(line.as_str(), "hëllo");
+        line.end();
+        line.insert('ü');
+        assert_eq!(line.as_str(), "hëlloü");
+    }
+
+    #[test]
+    fn input_cursor_column_counts_display_width() {
+        let mut line = typed("日本x");
+        assert_eq!(line.cursor_column(), 5);
+        line.left();
+        assert_eq!(line.cursor_column(), 4);
+        line.home();
+        assert_eq!(line.cursor_column(), 0);
+    }
+
+    #[test]
+    fn input_take_returns_text_and_clears() {
+        let mut line = typed("héllo");
+        assert_eq!(line.take(), "héllo");
+        assert!(line.is_empty());
+        assert_eq!(line.cursor, 0);
     }
 
     // ── App labels ───────────────────────────────────────────────────────────
