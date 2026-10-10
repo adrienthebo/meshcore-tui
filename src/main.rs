@@ -279,7 +279,22 @@ async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
             Some(name) => app.lock().await.sys(&format!("Scanning BLE for '{}'...", name)),
             None => app.lock().await.sys("Scanning for any MeshCore BLE device..."),
         }
-        match MeshCore::ble(device_name).await {
+        let name = match device_name {
+            Some(name) => Ok(name.to_string()),
+            None => MeshCore::ble_discover(Duration::from_secs(5))
+                .await
+                .and_then(|names| {
+                    names
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| meshcore_rs::Error::connection("no MeshCore BLE device found"))
+                }),
+        };
+        let connected = match name {
+            Ok(name) => MeshCore::ble_connect(&name).await,
+            Err(e) => Err(e),
+        };
+        match connected {
             Ok(mc) => mc,
             Err(e) => {
                 app.lock().await.err(&format!("BLE connect failed: {}", e));
@@ -346,8 +361,8 @@ async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
     // Battery
     if let Ok(bat) = mc.commands().lock().await.get_bat().await {
         let mut a = app.lock().await;
-        a.battery_level = Some(bat.level);
-        a.sys(&format!("Battery: {:.3}V", bat.level as f64 / 1000.0));
+        a.battery_level = Some(bat.battery_mv);
+        a.sys(&format!("Battery: {:.3}V", bat.battery_mv as f64 / 1000.0));
     }
 
     // Contacts (BLE needs longer timeout)
@@ -405,7 +420,7 @@ async fn setup_subscriptions(mc: &MeshCore, app: Arc<Mutex<App>>) {
     {
         let app = app.clone();
         mc.subscribe(EventType::ContactMsgRecv, HashMap::new(), move |event| {
-            if let EventPayload::Message(msg) = event.payload {
+            if let EventPayload::ContactMessage(msg) = event.payload {
                 let app = app.clone();
                 tokio::spawn(async move {
                     let mut a = app.lock().await;
@@ -432,17 +447,20 @@ async fn setup_subscriptions(mc: &MeshCore, app: Arc<Mutex<App>>) {
             EventType::ChannelMsgRecv,
             HashMap::new(),
             move |event| {
-                if let EventPayload::Message(msg) = event.payload {
+                if let EventPayload::ChannelMessage(msg) = event.payload {
                     let app = app.clone();
                     tokio::spawn(async move {
                         let mut a = app.lock().await;
-                        let sender = a.resolve_sender(&msg.sender_prefix);
-                        let ch = msg.channel.unwrap_or(0);
+                        let (sender, text) = match msg.text.split_once(": ") {
+                            Some((name, text)) => (sanitize(name), text),
+                            None => ("?".to_string(), msg.text.as_str()),
+                        };
+                        let ch = msg.channel_idx;
                         a.rx_count += 1;
                         a.messages.push(ChatMessage {
                             timestamp: now(),
                             sender,
-                            text: sanitize(&msg.text),
+                            text: sanitize(text),
                             msg_type: MsgType::Channel(ch),
                         });
                         // Bell on new message
@@ -630,7 +648,7 @@ async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
             .commands()
             .lock()
             .await
-            .send_chan_msg(channel, text, None)
+            .send_channel_msg(channel, text, None)
             .await
         {
             Ok(_) => {
@@ -751,8 +769,12 @@ async fn handle_command(cmd: &str, app: &Arc<Mutex<App>>, mc: Option<&MeshCore>)
                 match mc.commands().lock().await.get_bat().await {
                     Ok(b) => {
                         let mut a = app.lock().await;
-                        a.battery_level = Some(b.level);
-                        a.sys(&format!("Battery: {:.3}V  Storage: {}", b.level as f64 / 1000.0, b.storage));
+                        a.battery_level = Some(b.battery_mv);
+                        let storage = match (b.used_kb, b.total_kb) {
+                            (Some(used), Some(total)) => format!("{}/{} KB", used, total),
+                            _ => "N/A".to_string(),
+                        };
+                        a.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
                     }
                     Err(e) => app.lock().await.err(&format!("Battery: {}", e)),
                 }
@@ -1348,3 +1370,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("MeshCore Chat terminated.");
     Ok(())
 }
+
