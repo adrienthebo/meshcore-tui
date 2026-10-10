@@ -43,6 +43,27 @@ fn sanitize(s: &str) -> String {
         .to_string()
 }
 
+/// Split text into chunks of at most `width` display columns; a char wider
+/// than `width` gets a chunk of its own so wrapping always makes progress
+fn wrap_to_width(text: &str, width: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    let mut w = 0usize;
+    for c in text.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+        if w + cw > width && !chunk.is_empty() {
+            chunks.push(std::mem::take(&mut chunk));
+            w = 0;
+        }
+        chunk.push(c);
+        w += cw;
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    chunks
+}
+
 /// Truncate a string to fit within `max_width` display columns
 fn truncate_to_width(s: &str, max_width: usize) -> String {
     let mut w = 0usize;
@@ -1131,48 +1152,21 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
             let prefix_len = prefix.width();
             let text_display_width = m.text.width();
 
-            if prefix_len + text_display_width <= panel_width || panel_width <= prefix_len {
+            let chunks = if prefix_len + text_display_width <= panel_width || panel_width <= prefix_len {
                 // Fits on one line or panel too narrow to wrap
-                ListItem::new(Line::from(vec![
-                    Span::styled(&m.timestamp, Style::default().fg(Color::DarkGray)),
-                    Span::raw(" "),
-                    Span::styled(tag, Style::default().fg(tag_c).add_modifier(Modifier::BOLD)),
-                    Span::raw(" "),
-                    Span::styled(
-                        &m.sender,
-                        Style::default().fg(name_c).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(": ", Style::default().fg(name_c)),
-                    Span::styled(&m.text, Style::default().fg(Color::White)),
-                ]))
+                vec![m.text.clone()]
             } else {
-                // Wrap text across multiple lines
-                let text_width = panel_width.saturating_sub(prefix_len);
-                let continuation_indent = " ".repeat(prefix_len);
-                let mut lines: Vec<Line> = Vec::new();
-                let chars: Vec<char> = m.text.chars().collect();
+                wrap_to_width(&m.text, panel_width - prefix_len)
+            };
 
-                // Split chars into chunks that fit in text_width display columns
-                let mut chunk_start = 0;
-                let mut first = true;
-                while chunk_start < chars.len() {
-                    let mut w = 0usize;
-                    let mut chunk_end = chunk_start;
-                    while chunk_end < chars.len() {
-                        let cw = unicode_width::UnicodeWidthChar::width(chars[chunk_end]).unwrap_or(1);
-                        if w + cw > text_width {
-                            break;
-                        }
-                        w += cw;
-                        chunk_end += 1;
-                    }
-                    if chunk_end == chunk_start {
-                        chunk_end += 1; // always advance at least one char
-                    }
-                    let chunk_text: String = chars[chunk_start..chunk_end].iter().collect();
-
-                    if first {
-                        lines.push(Line::from(vec![
+            let continuation_indent = " ".repeat(prefix_len);
+            let lines: Vec<Line> = chunks
+                .into_iter()
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let body = Span::styled(chunk, Style::default().fg(Color::White));
+                    if i == 0 {
+                        Line::from(vec![
                             Span::styled(&m.timestamp, Style::default().fg(Color::DarkGray)),
                             Span::raw(" "),
                             Span::styled(tag.clone(), Style::default().fg(tag_c).add_modifier(Modifier::BOLD)),
@@ -1182,23 +1176,20 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
                                 Style::default().fg(name_c).add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(": ", Style::default().fg(name_c)),
-                            Span::styled(chunk_text, Style::default().fg(Color::White)),
-                        ]));
-                        first = false;
+                            body,
+                        ])
                     } else {
-                        lines.push(Line::from(vec![
+                        Line::from(vec![
                             Span::styled(
                                 continuation_indent.clone(),
                                 Style::default().fg(Color::DarkGray),
                             ),
-                            Span::styled(chunk_text, Style::default().fg(Color::White)),
-                        ]));
+                            body,
+                        ])
                     }
-                    chunk_start = chunk_end;
-                }
-
-                ListItem::new(lines)
-            }
+                })
+                .collect();
+            ListItem::new(lines)
         })
         .collect::<Vec<_>>();
 
@@ -2107,6 +2098,147 @@ mod tests {
             app.on_direct_sent(&alice, "x", &info);
         }
         assert_eq!(app.packets.len(), MAX_PACKETS);
+    }
+
+    // ── wrap_to_width ────────────────────────────────────────────────────────
+
+    #[test]
+    fn wrap_short_text_is_one_chunk() {
+        assert_eq!(wrap_to_width("abc", 10), vec!["abc"]);
+    }
+
+    #[test]
+    fn wrap_splits_at_width() {
+        assert_eq!(wrap_to_width("abcdefg", 3), vec!["abc", "def", "g"]);
+    }
+
+    #[test]
+    fn wrap_counts_display_columns() {
+        assert_eq!(wrap_to_width("日本語x", 4), vec!["日本", "語x"]);
+    }
+
+    #[test]
+    fn wrap_char_wider_than_width_gets_own_chunk() {
+        assert_eq!(wrap_to_width("a日b", 1), vec!["a", "日", "b"]);
+    }
+
+    #[test]
+    fn wrap_zero_width_still_makes_progress() {
+        assert_eq!(wrap_to_width("ab", 0), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn wrap_empty_text_has_no_chunks() {
+        assert!(wrap_to_width("", 5).is_empty());
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────────────
+
+    fn render(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        terminal.backend().to_string()
+    }
+
+    fn chat_message(sender: &str, text: &str, msg_type: MsgType) -> ChatMessage {
+        ChatMessage {
+            timestamp: "12:34:56".to_string(),
+            sender: sender.to_string(),
+            text: text.to_string(),
+            msg_type,
+        }
+    }
+
+    fn packet(ptype: &str, hops: u8, info: &str) -> PacketLogEntry {
+        PacketLogEntry {
+            timestamp: "12:34:56".to_string(),
+            ptype: ptype.to_string(),
+            hops,
+            rssi: 0,
+            snr: 0.0,
+            info: info.to_string(),
+        }
+    }
+
+    fn connected_app() -> App {
+        let mut app = App::new(0);
+        app.connected = true;
+        app.port_info = "/dev/ttyACM0".to_string();
+        app.self_info = Some(SelfInfo {
+            name: "Base".to_string(),
+            radio_freq: 869_618,
+            radio_bw: 62_500,
+            sf: 8,
+            cr: 5,
+            ..Default::default()
+        });
+        app.channels.insert(0, channel("Public"));
+        app.channels.insert(1, channel("Ops"));
+        app.contacts.push(contact("Alice", [0xa1; 6]));
+        app.contacts.push(contact("Bob the very long named repeater", [0xb2; 6]));
+        app.rx_count = 3;
+        app.tx_count = 1;
+        app.messages = vec![
+            chat_message("SYS", "Connected", MsgType::System),
+            chat_message("Alice", "hi there", MsgType::Incoming),
+            chat_message("\u{2192} Alice", "hello!", MsgType::Outgoing),
+            chat_message("Carol", "anyone on ops?", MsgType::Channel(1)),
+            chat_message("ERR", "Send failed: timeout", MsgType::Error),
+        ];
+        app.packets = vec![
+            packet("ADV", 0, "Repeater @52.0089,4.3531"),
+            packet("ACK", 0, "tag:deadbeef"),
+            packet("PATH", 2, "a1a1a1a1a1a1 len=2"),
+        ];
+        app
+    }
+
+    #[test]
+    fn render_offline() {
+        insta::assert_snapshot!(render(&App::new(0), 80, 24));
+    }
+
+    #[test]
+    fn render_connected_chat() {
+        insta::assert_snapshot!(render(&connected_app(), 80, 24));
+    }
+
+    #[test]
+    fn render_selected_contact_with_input() {
+        let mut app = connected_app();
+        app.panel = Panel::Contacts;
+        app.selected_contact = Some(1);
+        for c in "typing…".chars() {
+            app.input.insert(c);
+        }
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn render_wraps_long_messages() {
+        let mut app = connected_app();
+        app.messages.push(chat_message(
+            "Alice",
+            "this message is long enough that it has to wrap across several lines of the message panel",
+            MsgType::Incoming,
+        ));
+        app.messages.push(chat_message("Bob", "日本語のテキストも折り返す必要があります。日本語のテキスト", MsgType::Incoming));
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn render_shows_newest_entries_when_panels_overflow() {
+        let mut app = connected_app();
+        for i in 0..30 {
+            app.messages.push(chat_message("SYS", &format!("message {}", i), MsgType::System));
+            app.packets.push(packet("ACK", 0, &format!("packet {}", i)));
+        }
+        insta::assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
+    fn render_narrow_terminal() {
+        insta::assert_snapshot!(render(&connected_app(), 60, 24));
     }
 
     // ── App labels ───────────────────────────────────────────────────────────
