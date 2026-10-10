@@ -869,14 +869,10 @@ fn parse_channel_index(arg: &str, spec: &CommandSpec) -> Result<u8, String> {
 }
 
 fn parse_secret(hex: &str) -> Result<[u8; 16], String> {
-    match meshcore_rs::parsing::hex_decode(hex) {
-        Ok(bytes) if bytes.len() >= 16 => {
-            let mut secret = [0u8; 16];
-            secret.copy_from_slice(&bytes[..16]);
-            Ok(secret)
-        }
-        _ => Err("Secret must be 32 hex chars (16 bytes)".to_string()),
-    }
+    meshcore_rs::parsing::hex_decode(hex)
+        .ok()
+        .and_then(|bytes| <[u8; 16]>::try_from(bytes).ok())
+        .ok_or_else(|| "Secret must be 32 hex chars (16 bytes)".to_string())
 }
 
 /// Parse a slash command line; the error is the text to show the user
@@ -1858,6 +1854,8 @@ mod tests {
         let bad_secret = Err("Secret must be 32 hex chars (16 bytes)".to_string());
         assert_eq!(parse_command("/setch 1 Ops abcd"), bad_secret);
         assert_eq!(parse_command("/setch 1 Ops zz112233445566778899aabbccddeeff"), bad_secret);
+        assert_eq!(parse_command("/setch 1 Ops 00112233445566778899aabbccddeeff00"), bad_secret);
+        assert_eq!(parse_command("/setch 1 Ops 00112233445566778899aabbccddeef"), bad_secret);
     }
 
     fn last_message(app: &App) -> &str {
