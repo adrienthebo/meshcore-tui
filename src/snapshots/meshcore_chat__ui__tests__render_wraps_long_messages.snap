@@ -1,20 +1,20 @@
 ---
-source: src/main.rs
+source: src/ui.rs
 expression: "render(&app, 80, 24)"
 ---
 "┌ Status ──────────────────────────────────────────────────────────────────────┐"
 "│Port: /dev/ttyACM0 | 869.618 MHz | BW: 62.5 kHz | SF: 8 | CR: 5 | RX: 3 | TX: │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-"┌ Base — Bob the very long named repeater ───────┐┌ Contacts (2) ──────────────┐"
-"│12:34:56 [SYS] SYS: Connected                   ││  Alice (a1a1a1a1)          │"
-"│12:34:56 [MSG] Alice: hi there                  ││▶ Bob the very long named re│"
-"│12:34:56 [SND] → Alice: hello!                  ││                            │"
-"│12:34:56 [Ops] Carol: anyone on ops?            ││                            │"
-"│12:34:56 [ERR] ERR: Send failed: timeout        ││                            │"
-"│                                                ││                            │"
-"│                                                ││                            │"
-"│                                                ││                            │"
-"│                                                ││                            │"
+"┌ Base — Public ─────────────────────────────────┐┌ Contacts (2) ──────────────┐"
+"│12:34:56 [Ops] Carol: anyone on ops?            ││  Alice (a1a1a1a1)          │"
+"│12:34:56 [ERR] ERR: Send failed: timeout        ││  Bob the very long named re│"
+"│12:34:56 [MSG] Alice: this message is long enoug││                            │"
+"│                      h that it has to wrap acro││                            │"
+"│                      ss several lines of the me││                            │"
+"│                      ssage panel               ││                            │"
+"│12:34:56 [MSG] Bob: 日本語のテキストも折り返す必││                            │" Hidden by multi-width symbols: [(22, " "), (24, " "), (26, " "), (28, " "), (30, " "), (32, " "), (34, " "), (36, " "), (38, " "), (40, " "), (42, " "), (44, " "), (46, " "), (48, " ")]
+"│                    要があります。日本語のテキス││                            │" Hidden by multi-width symbols: [(22, " "), (24, " "), (26, " "), (28, " "), (30, " "), (32, " "), (34, " "), (36, " "), (38, " "), (40, " "), (42, " "), (44, " "), (46, " "), (48, " ")]
+"│                    ト                          ││                            │" Hidden by multi-width symbols: [(22, " ")]
 "└────────────────────────────────────────────────┘└────────────────────────────┘"
 "┌ Received Packets ────────────────────────────────────────────────────────────┐"
 "│12:34:56 [ADV] H:0 | Repeater @52.0089,4.3531                                 │"
@@ -23,6 +23,6 @@ expression: "render(&app, 80, 24)"
 "│                                                                              │"
 "│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
-"┌ Send to: Bob the very long named repeater (Enter=send, Tab=panel, ↑↓=contact,┐"
-"│typing…                                                                       │"
+"┌ Send to: Public (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ──┐"
+"│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"

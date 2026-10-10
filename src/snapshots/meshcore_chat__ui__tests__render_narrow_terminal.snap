@@ -1,5 +1,5 @@
 ---
-source: src/main.rs
+source: src/ui.rs
 expression: "render(&connected_app(), 60, 24)"
 ---
 "┌ Status ──────────────────────────────────────────────────┐"
