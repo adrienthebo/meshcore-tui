@@ -10,7 +10,10 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use meshcore_rs::events::{Contact, EventPayload, SelfInfo};
+use meshcore_rs::events::{
+    AdvertisementData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
+    PathUpdateData, SelfInfo,
+};
 use meshcore_rs::{EventType, MeshCore};
 use unicode_width::UnicodeWidthStr;
 
@@ -247,22 +250,114 @@ impl App {
         }
     }
 
-    fn sys(&mut self, text: &str) {
+    /// Append a chat message, dropping the oldest beyond MAX_MESSAGES
+    fn push_message(&mut self, sender: String, text: String, msg_type: MsgType) {
         self.messages.push(ChatMessage {
             timestamp: now(),
-            sender: "SYS".into(),
-            text: text.into(),
-            msg_type: MsgType::System,
+            sender,
+            text,
+            msg_type,
         });
+        if self.messages.len() > MAX_MESSAGES {
+            let excess = self.messages.len() - MAX_MESSAGES;
+            self.messages.drain(..excess);
+        }
+    }
+
+    /// Append a packet log entry, dropping the oldest beyond MAX_PACKETS
+    fn push_packet(&mut self, ptype: &str, hops: u8, info: String) {
+        self.packets.push(PacketLogEntry {
+            timestamp: now(),
+            ptype: ptype.into(),
+            hops,
+            rssi: 0,
+            snr: 0.0,
+            info,
+        });
+        if self.packets.len() > MAX_PACKETS {
+            let excess = self.packets.len() - MAX_PACKETS;
+            self.packets.drain(..excess);
+        }
+    }
+
+    fn sys(&mut self, text: &str) {
+        self.push_message("SYS".into(), text.into(), MsgType::System);
     }
 
     fn err(&mut self, text: &str) {
-        self.messages.push(ChatMessage {
-            timestamp: now(),
-            sender: "ERR".into(),
-            text: text.into(),
-            msg_type: MsgType::Error,
-        });
+        self.push_message("ERR".into(), text.into(), MsgType::Error);
+    }
+
+    // ── Radio events ─────────────────────────────────────────────────────────
+
+    fn on_contact_message(&mut self, msg: &ContactMessage) {
+        let sender = self.resolve_sender(&msg.sender_prefix);
+        self.rx_count += 1;
+        self.push_message(sender, sanitize(&msg.text), MsgType::Incoming);
+    }
+
+    /// Channel messages carry the sender's name in the body as "name: text"
+    fn on_channel_message(&mut self, msg: &ChannelMessage) {
+        let (sender, text) = match msg.text.split_once(": ") {
+            Some((name, text)) => (sanitize(name), text),
+            None => ("?".to_string(), msg.text.as_str()),
+        };
+        self.rx_count += 1;
+        self.push_message(sender, sanitize(text), MsgType::Channel(msg.channel_idx));
+    }
+
+    fn on_advertisement(&mut self, adv: &AdvertisementData) {
+        let info = format!(
+            "{} @{:.4},{:.4}",
+            sanitize(&adv.name),
+            adv.lat as f64 / 1e6,
+            adv.lon as f64 / 1e6
+        );
+        self.push_packet("ADV", 0, info);
+    }
+
+    fn on_new_contact(&mut self, contact: Contact) {
+        let info = format!(
+            "{} [{}] @{:.4},{:.4}",
+            sanitize(&contact.adv_name),
+            contact.prefix_hex(),
+            contact.latitude(),
+            contact.longitude(),
+        );
+        self.push_packet("ADV", hop_count(contact.path_len), info);
+        self.contacts.retain(|c| c.prefix() != contact.prefix());
+        self.contacts.push(contact);
+    }
+
+    fn on_ack(&mut self, tag: &[u8; 4]) {
+        self.push_packet("ACK", 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
+    }
+
+    fn on_path_update(&mut self, pu: &PathUpdateData) {
+        let info = format!(
+            "{} len={}",
+            meshcore_rs::parsing::hex_encode(&pu.prefix),
+            pu.path_len
+        );
+        self.push_packet("PATH", hop_count(pu.path_len), info);
+    }
+
+    fn on_direct_sent(&mut self, contact: &Contact, text: &str, info: &MsgSentInfo) {
+        self.tx_count += 1;
+        let sender = format!("\u{2192} {}", sanitize(&contact.adv_name));
+        self.push_message(sender, text.into(), MsgType::Outgoing);
+        let packet_info = format!(
+            "ack:{} timeout:{}ms",
+            meshcore_rs::parsing::hex_encode(&info.expected_ack),
+            info.suggested_timeout
+        );
+        self.push_packet("SND", 0, packet_info);
+    }
+
+    fn on_channel_sent(&mut self, channel: u8, text: &str) {
+        self.tx_count += 1;
+        let sender = format!("\u{2192} {}", self.channel_label(channel));
+        self.push_message(sender, text.into(), MsgType::Outgoing);
     }
 
     fn device_name(&self) -> String {
@@ -358,6 +453,14 @@ impl App {
                 }
             })
     }
+}
+
+const MAX_MESSAGES: usize = 1000;
+const MAX_PACKETS: usize = 100;
+
+/// Hop count for display; a negative path length means the path is unknown (flood)
+fn hop_count(path_len: i8) -> u8 {
+    path_len.max(0) as u8
 }
 
 fn now() -> String {
@@ -530,232 +633,92 @@ async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
     Some(mc)
 }
 
-async fn setup_subscriptions(mc: &MeshCore, app: Arc<Mutex<App>>) {
-    // Direct messages
-    {
+/// Subscribe to a radio event type and apply its payload to the app state
+async fn on_radio_event(
+    mc: &MeshCore,
+    app: &Arc<Mutex<App>>,
+    event_type: EventType,
+    apply: fn(&mut App, EventPayload),
+) {
+    let app = app.clone();
+    mc.subscribe(event_type, HashMap::new(), move |event| {
         let app = app.clone();
-        mc.subscribe(EventType::ContactMsgRecv, HashMap::new(), move |event| {
-            if let EventPayload::ContactMessage(msg) = event.payload {
-                let app = app.clone();
-                tokio::spawn(async move {
-                    let mut a = app.lock().await;
-                    let sender = a.resolve_sender(&msg.sender_prefix);
-                    a.rx_count += 1;
-                    a.messages.push(ChatMessage {
-                        timestamp: now(),
-                        sender,
-                        text: sanitize(&msg.text),
-                        msg_type: MsgType::Incoming,
-                    });
-                    // Bell on new message
-                    print!("\x07");
-                });
-            }
-        })
-        .await;
-    }
+        tokio::spawn(async move {
+            apply(&mut *app.lock().await, event.payload);
+        });
+    })
+    .await;
+}
 
-    // Channel messages
-    {
-        let app = app.clone();
-        mc.subscribe(
-            EventType::ChannelMsgRecv,
-            HashMap::new(),
-            move |event| {
-                if let EventPayload::ChannelMessage(msg) = event.payload {
-                    let app = app.clone();
-                    tokio::spawn(async move {
-                        let mut a = app.lock().await;
-                        let (sender, text) = match msg.text.split_once(": ") {
-                            Some((name, text)) => (sanitize(name), text),
-                            None => ("?".to_string(), msg.text.as_str()),
-                        };
-                        let ch = msg.channel_idx;
-                        a.rx_count += 1;
-                        a.messages.push(ChatMessage {
-                            timestamp: now(),
-                            sender,
-                            text: sanitize(text),
-                            msg_type: MsgType::Channel(ch),
-                        });
-                        // Bell on new message
-                        print!("\x07");
-                    });
-                }
-            },
-        )
-        .await;
-    }
+/// Ring the terminal bell
+fn bell() {
+    print!("\x07");
+}
+
+async fn setup_subscriptions(mc: &MeshCore, app: Arc<Mutex<App>>) {
+    on_radio_event(mc, &app, EventType::ContactMsgRecv, |a, payload| {
+        if let EventPayload::ContactMessage(msg) = payload {
+            a.on_contact_message(&msg);
+            bell();
+        }
+    })
+    .await;
+
+    on_radio_event(mc, &app, EventType::ChannelMsgRecv, |a, payload| {
+        if let EventPayload::ChannelMessage(msg) = payload {
+            a.on_channel_message(&msg);
+            bell();
+        }
+    })
+    .await;
 
     // Advertisements (0x80)
-    {
-        let app = app.clone();
-        mc.subscribe(
-            EventType::Advertisement,
-            HashMap::new(),
-            move |event| {
-                if let EventPayload::Advertisement(adv) = event.payload {
-                    let app = app.clone();
-                    tokio::spawn(async move {
-                        let mut a = app.lock().await;
-                        a.packets.push(PacketLogEntry {
-                            timestamp: now(),
-                            ptype: "ADV".into(),
-                            hops: 0,
-                            rssi: 0,
-                            snr: 0.0,
-                            info: format!(
-                                "{} @{:.4},{:.4}",
-                                sanitize(&adv.name),
-                                adv.lat as f64 / 1e6,
-                                adv.lon as f64 / 1e6
-                            ),
-                        });
-                        if a.packets.len() > 100 {
-                            a.packets.remove(0);
-                        }
-                    });
-                }
-            },
-        )
-        .await;
-    }
+    on_radio_event(mc, &app, EventType::Advertisement, |a, payload| {
+        if let EventPayload::Advertisement(adv) = payload {
+            a.on_advertisement(&adv);
+        }
+    })
+    .await;
 
     // New contacts / adverts (0x8A PushCodeNewAdvert)
-    {
-        let app = app.clone();
-        mc.subscribe(
-            EventType::NewContact,
-            HashMap::new(),
-            move |event| {
-                if let EventPayload::Contact(contact) = event.payload {
-                    let app = app.clone();
-                    tokio::spawn(async move {
-                        let mut a = app.lock().await;
-                        let name = sanitize(&contact.adv_name);
-                        a.packets.push(PacketLogEntry {
-                            timestamp: now(),
-                            ptype: "ADV".into(),
-                            hops: contact.path_len.max(0) as u8,
-                            rssi: 0,
-                            snr: 0.0,
-                            info: format!(
-                                "{} [{}] @{:.4},{:.4}",
-                                name,
-                                contact.prefix_hex(),
-                                contact.latitude(),
-                                contact.longitude(),
-                            ),
-                        });
-                        if a.packets.len() > 100 {
-                            a.packets.remove(0);
-                        }
-                        // Update contact list
-                        a.contacts.retain(|c| c.prefix() != contact.prefix());
-                        a.contacts.push(contact);
-                    });
-                }
-            },
-        )
-        .await;
-    }
+    on_radio_event(mc, &app, EventType::NewContact, |a, payload| {
+        if let EventPayload::Contact(contact) = payload {
+            a.on_new_contact(contact);
+        }
+    })
+    .await;
 
-    // ACKs
-    {
-        let app = app.clone();
-        mc.subscribe(EventType::Ack, HashMap::new(), move |event| {
-            if let EventPayload::Ack { tag } = event.payload {
-                let app = app.clone();
-                tokio::spawn(async move {
-                    let mut a = app.lock().await;
-                    a.packets.push(PacketLogEntry {
-                        timestamp: now(),
-                        ptype: "ACK".into(),
-                        hops: 0,
-                        rssi: 0,
-                        snr: 0.0,
-                        info: format!("tag:{}", meshcore_rs::parsing::hex_encode(&tag)),
-                    });
-                    if a.packets.len() > 100 {
-                        a.packets.remove(0);
-                    }
-                });
-            }
-        })
-        .await;
-    }
+    on_radio_event(mc, &app, EventType::Ack, |a, payload| {
+        if let EventPayload::Ack { tag } = payload {
+            a.on_ack(&tag);
+        }
+    })
+    .await;
 
-    // Path updates
-    {
-        let app = app.clone();
-        mc.subscribe(EventType::PathUpdate, HashMap::new(), move |event| {
-            if let EventPayload::PathUpdate(pu) = event.payload {
-                let app = app.clone();
-                tokio::spawn(async move {
-                    let mut a = app.lock().await;
-                    a.packets.push(PacketLogEntry {
-                        timestamp: now(),
-                        ptype: "PATH".into(),
-                        hops: pu.path_len as u8,
-                        rssi: 0,
-                        snr: 0.0,
-                        info: format!(
-                            "{} len={}",
-                            meshcore_rs::parsing::hex_encode(&pu.prefix),
-                            pu.path_len
-                        ),
-                    });
-                    if a.packets.len() > 100 {
-                        a.packets.remove(0);
-                    }
-                });
-            }
-        })
-        .await;
-    }
+    on_radio_event(mc, &app, EventType::PathUpdate, |a, payload| {
+        if let EventPayload::PathUpdate(pu) = payload {
+            a.on_path_update(&pu);
+        }
+    })
+    .await;
 
     mc.start_auto_message_fetching().await;
 }
 
 async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
-    let (selected, channel) = {
+    let (contact, channel) = {
         let a = app.lock().await;
-        (a.selected_contact, a.active_channel)
+        (
+            a.selected_contact.and_then(|idx| a.contacts.get(idx).cloned()),
+            a.active_channel,
+        )
     };
 
-    if let Some(idx) = selected {
+    if let Some(contact) = contact {
         // Direct message to selected contact
-        let contact = {
-            let a = app.lock().await;
-            a.contacts.get(idx).cloned()
-        };
-        if let Some(contact) = contact {
-            let name = sanitize(&contact.adv_name);
-            match mc.commands().lock().await.send_msg(&contact, text, None).await {
-                Ok(info) => {
-                    let mut a = app.lock().await;
-                    a.tx_count += 1;
-                    a.messages.push(ChatMessage {
-                        timestamp: now(),
-                        sender: format!("→ {}", name),
-                        text: text.into(),
-                        msg_type: MsgType::Outgoing,
-                    });
-                    a.packets.push(PacketLogEntry {
-                        timestamp: now(),
-                        ptype: "SND".into(),
-                        hops: 0,
-                        rssi: 0,
-                        snr: 0.0,
-                        info: format!(
-                            "ack:{} timeout:{}ms",
-                            meshcore_rs::parsing::hex_encode(&info.expected_ack),
-                            info.suggested_timeout
-                        ),
-                    });
-                }
-                Err(e) => app.lock().await.err(&format!("Send failed: {}", e)),
-            }
+        match mc.commands().lock().await.send_msg(&contact, text, None).await {
+            Ok(info) => app.lock().await.on_direct_sent(&contact, text, &info),
+            Err(e) => app.lock().await.err(&format!("Send failed: {}", e)),
         }
     } else {
         // Channel message
@@ -766,17 +729,7 @@ async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
             .send_channel_msg(channel, text, None)
             .await
         {
-            Ok(_) => {
-                let mut a = app.lock().await;
-                a.tx_count += 1;
-                let label = a.channel_label(channel);
-                a.messages.push(ChatMessage {
-                    timestamp: now(),
-                    sender: format!("\u{2192} {}", label),
-                    text: text.into(),
-                    msg_type: MsgType::Outgoing,
-                });
-            }
+            Ok(_) => app.lock().await.on_channel_sent(channel, text),
             Err(e) => app.lock().await.err(&format!("Channel send failed: {}", e)),
         }
     }
@@ -1985,6 +1938,175 @@ mod tests {
             assert_eq!(format!("{:?}", returned), expected);
         }
         assert!(app.messages.is_empty());
+    }
+
+    // ── Radio events ─────────────────────────────────────────────────────────
+
+    fn contact_message(prefix: [u8; 6], text: &str) -> ContactMessage {
+        ContactMessage {
+            sender_prefix: prefix,
+            path_len: 0,
+            txt_type: 0,
+            sender_timestamp: 0,
+            text: text.to_string(),
+            snr: None,
+            signature: None,
+        }
+    }
+
+    fn channel_message(channel_idx: u8, text: &str) -> ChannelMessage {
+        ChannelMessage {
+            channel_idx,
+            path_len: 0,
+            txt_type: 0,
+            sender_timestamp: 0,
+            text: text.to_string(),
+            snr: None,
+        }
+    }
+
+    fn last_packet(app: &App) -> &PacketLogEntry {
+        app.packets.last().expect("no packets")
+    }
+
+    #[test]
+    fn contact_message_resolves_sender_and_counts_rx() {
+        let mut app = App::new(0);
+        app.contacts.push(contact("Alice", [1; 6]));
+        app.on_contact_message(&contact_message([1; 6], "hi\u{0} there"));
+        let msg = app.messages.last().unwrap();
+        assert_eq!(msg.sender, "Alice");
+        assert_eq!(msg.text, "hi there");
+        assert_eq!(msg.msg_type, MsgType::Incoming);
+        assert_eq!(app.rx_count, 1);
+    }
+
+    #[test]
+    fn channel_message_splits_sender_from_body() {
+        let mut app = App::new(0);
+        app.on_channel_message(&channel_message(3, "Bob: hello: world"));
+        let msg = app.messages.last().unwrap();
+        assert_eq!(msg.sender, "Bob");
+        assert_eq!(msg.text, "hello: world");
+        assert_eq!(msg.msg_type, MsgType::Channel(3));
+        assert_eq!(app.rx_count, 1);
+    }
+
+    #[test]
+    fn channel_message_without_sender_uses_placeholder() {
+        let mut app = App::new(0);
+        app.on_channel_message(&channel_message(0, "no separator"));
+        let msg = app.messages.last().unwrap();
+        assert_eq!(msg.sender, "?");
+        assert_eq!(msg.text, "no separator");
+    }
+
+    #[test]
+    fn advertisement_logs_name_and_position() {
+        let mut app = App::new(0);
+        app.on_advertisement(&AdvertisementData {
+            prefix: [1; 6],
+            name: "Repeater".to_string(),
+            lat: 52_008_900,
+            lon: 4_353_100,
+        });
+        let p = last_packet(&app);
+        assert_eq!(p.ptype, "ADV");
+        assert_eq!(p.info, "Repeater @52.0089,4.3531");
+    }
+
+    #[test]
+    fn new_contact_replaces_existing_contact_with_same_prefix() {
+        let mut app = App::new(0);
+        app.contacts.push(contact("Old name", [1; 6]));
+        app.contacts.push(contact("Other", [2; 6]));
+        let mut updated = contact("New name", [1; 6]);
+        updated.path_len = 2;
+        app.on_new_contact(updated);
+        let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
+        assert_eq!(names, vec!["Other", "New name"]);
+        assert_eq!(last_packet(&app).ptype, "ADV");
+        assert_eq!(last_packet(&app).hops, 2);
+    }
+
+    #[test]
+    fn new_contact_with_flood_path_logs_zero_hops() {
+        let mut app = App::new(0);
+        let mut flood = contact("Flood", [1; 6]);
+        flood.path_len = -1;
+        app.on_new_contact(flood);
+        assert_eq!(last_packet(&app).hops, 0);
+    }
+
+    #[test]
+    fn ack_logs_tag() {
+        let mut app = App::new(0);
+        app.on_ack(&[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(last_packet(&app).ptype, "ACK");
+        assert_eq!(last_packet(&app).info, "tag:deadbeef");
+    }
+
+    #[test]
+    fn path_update_logs_hops() {
+        let mut app = App::new(0);
+        app.on_path_update(&PathUpdateData { prefix: [0xab; 6], path_len: 3, path: vec![] });
+        let p = last_packet(&app);
+        assert_eq!(p.ptype, "PATH");
+        assert_eq!(p.hops, 3);
+        assert_eq!(p.info, "abababababab len=3");
+    }
+
+    #[test]
+    fn path_update_with_flood_path_logs_zero_hops() {
+        let mut app = App::new(0);
+        app.on_path_update(&PathUpdateData { prefix: [1; 6], path_len: -1, path: vec![] });
+        assert_eq!(last_packet(&app).hops, 0);
+    }
+
+    #[test]
+    fn direct_sent_logs_message_and_packet() {
+        let mut app = App::new(0);
+        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
+        app.on_direct_sent(&contact("Alice", [1; 6]), "yo", &info);
+        let msg = app.messages.last().unwrap();
+        assert_eq!(msg.sender, "\u{2192} Alice");
+        assert_eq!(msg.msg_type, MsgType::Outgoing);
+        assert_eq!(last_packet(&app).info, "ack:01020304 timeout:5000ms");
+        assert_eq!(app.tx_count, 1);
+    }
+
+    #[test]
+    fn channel_sent_logs_message_with_channel_label() {
+        let mut app = App::new(0);
+        app.channels.insert(2, channel("Ops"));
+        app.on_channel_sent(2, "yo");
+        let msg = app.messages.last().unwrap();
+        assert_eq!(msg.sender, "\u{2192} Ops");
+        assert_eq!(msg.text, "yo");
+        assert_eq!(app.tx_count, 1);
+        assert!(app.packets.is_empty());
+    }
+
+    #[test]
+    fn messages_are_capped_keeping_newest() {
+        let mut app = App::new(0);
+        for i in 0..MAX_MESSAGES + 5 {
+            app.sys(&i.to_string());
+        }
+        assert_eq!(app.messages.len(), MAX_MESSAGES);
+        assert_eq!(app.messages[0].text, "5");
+        assert_eq!(last_message(&app), (MAX_MESSAGES + 4).to_string());
+    }
+
+    #[test]
+    fn packets_are_capped_including_sent_entries() {
+        let mut app = App::new(0);
+        let info = MsgSentInfo { message_type: 0, expected_ack: [0; 4], suggested_timeout: 0 };
+        let alice = contact("Alice", [1; 6]);
+        for _ in 0..MAX_PACKETS + 5 {
+            app.on_direct_sent(&alice, "x", &info);
+        }
+        assert_eq!(app.packets.len(), MAX_PACKETS);
     }
 
     // ── App labels ───────────────────────────────────────────────────────────
