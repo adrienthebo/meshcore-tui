@@ -1371,3 +1371,179 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contact(name: &str, key_prefix: [u8; 6]) -> Contact {
+        let mut public_key = [0u8; 32];
+        public_key[..6].copy_from_slice(&key_prefix);
+        Contact {
+            public_key,
+            contact_type: 1,
+            flags: 0,
+            path_len: 0,
+            out_path: Vec::new(),
+            adv_name: name.to_string(),
+            last_advert: 0,
+            adv_lat: 0,
+            adv_lon: 0,
+            last_modification_timestamp: 0,
+        }
+    }
+
+    fn channel(name: &str) -> ChannelEntry {
+        ChannelEntry {
+            name: name.to_string(),
+            secret: [0u8; 16],
+        }
+    }
+
+    // ── sanitize ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_keeps_plain_and_latin_text() {
+        assert_eq!(sanitize("hello world"), "hello world");
+        assert_eq!(sanitize("Zoë Ångström"), "Zoë Ångström");
+    }
+
+    #[test]
+    fn sanitize_strips_control_and_replacement_chars() {
+        assert_eq!(sanitize("a\u{0}b\tc\u{FFFD}d"), "abcd");
+    }
+
+    #[test]
+    fn sanitize_strips_emoji_and_symbols_at_or_above_u2600() {
+        assert_eq!(sanitize("hi 😀 ☀ there"), "hi   there");
+    }
+
+    #[test]
+    fn sanitize_strips_cjk() {
+        assert_eq!(sanitize("node 日本"), "node");
+    }
+
+    #[test]
+    fn sanitize_keeps_box_drawing() {
+        assert_eq!(sanitize("─│▀"), "─│▀");
+    }
+
+    #[test]
+    fn sanitize_trims_surrounding_whitespace() {
+        assert_eq!(sanitize("  name \n"), "name");
+    }
+
+    // ── truncate_to_width ────────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_shorter_than_width_is_unchanged() {
+        assert_eq!(truncate_to_width("abc", 10), "abc");
+    }
+
+    #[test]
+    fn truncate_cuts_at_width() {
+        assert_eq!(truncate_to_width("abcdef", 4), "abcd");
+        assert_eq!(truncate_to_width("abc", 0), "");
+    }
+
+    #[test]
+    fn truncate_counts_display_columns_not_chars() {
+        // Each CJK char is two columns wide; a third would exceed 5 columns.
+        assert_eq!(truncate_to_width("日本語", 5), "日本");
+    }
+
+    // ── App labels ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn channel_label_uses_local_channel_name() {
+        let mut app = App::new(0);
+        app.channels.insert(1, channel("Local"));
+        assert_eq!(app.channel_label(1), "Local");
+    }
+
+    #[test]
+    fn channel_label_falls_back_to_firmware_index_mapping() {
+        let mut app = App::new(0);
+        app.channels.insert(1, channel("Mapped"));
+        app.fw_channel_map.insert(5, 1);
+        assert_eq!(app.channel_label(5), "Mapped");
+    }
+
+    #[test]
+    fn channel_label_ignores_empty_names() {
+        let mut app = App::new(0);
+        app.channels.insert(2, channel(""));
+        assert_eq!(app.channel_label(2), "CH#2");
+    }
+
+    #[test]
+    fn channel_label_defaults_to_index() {
+        assert_eq!(App::new(0).channel_label(7), "CH#7");
+    }
+
+    #[test]
+    fn resolve_sender_finds_known_contact() {
+        let mut app = App::new(0);
+        app.contacts.push(contact("Alice 😀", [1, 2, 3, 4, 5, 6]));
+        assert_eq!(app.resolve_sender(&[1, 2, 3, 4, 5, 6]), "Alice");
+    }
+
+    #[test]
+    fn resolve_sender_unknown_prefix_is_hex_without_leading_zeros() {
+        let app = App::new(0);
+        assert_eq!(app.resolve_sender(&[0, 0x0a, 0xbc, 0, 0, 1]), "abc000001");
+    }
+
+    #[test]
+    fn resolve_sender_all_zero_prefix_is_zero() {
+        assert_eq!(App::new(0).resolve_sender(&[0; 6]), "0");
+    }
+
+    #[test]
+    fn target_label_prefers_selected_contact() {
+        let mut app = App::new(0);
+        app.contacts.push(contact("Bob", [9; 6]));
+        app.selected_contact = Some(0);
+        assert_eq!(app.target_label(), "Bob");
+    }
+
+    #[test]
+    fn target_label_without_selection_is_active_channel() {
+        let mut app = App::new(3);
+        app.channels.insert(3, channel("Ops"));
+        assert_eq!(app.target_label(), "Ops");
+    }
+
+    #[test]
+    fn target_label_with_stale_selection_is_active_channel() {
+        let mut app = App::new(0);
+        app.selected_contact = Some(4);
+        assert_eq!(app.target_label(), "CH#0");
+    }
+
+    #[test]
+    fn device_name_defaults_to_unknown() {
+        assert_eq!(App::new(0).device_name(), "Unknown");
+    }
+
+    #[test]
+    fn device_name_uses_sanitized_self_info_name() {
+        let mut app = App::new(0);
+        app.self_info = Some(SelfInfo {
+            name: " Base\u{0} ".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(app.device_name(), "Base");
+    }
+
+    #[test]
+    fn sys_and_err_append_tagged_messages() {
+        let mut app = App::new(0);
+        app.sys("hello");
+        app.err("oops");
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.messages[0].sender, "SYS");
+        assert_eq!(app.messages[0].msg_type, MsgType::System);
+        assert_eq!(app.messages[1].sender, "ERR");
+        assert_eq!(app.messages[1].msg_type, MsgType::Error);
+    }
+}
