@@ -18,11 +18,11 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use app::App;
 use commands::handle_command;
-use radio::{connect, send_message, setup_subscriptions};
+use radio::{apply_queued_events, connect, send_message, setup_subscriptions};
 use ui::draw;
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
@@ -52,6 +52,11 @@ struct Args {
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
+
+/// Ring the terminal bell
+fn bell() {
+    print!("\x07");
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -85,10 +90,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mc = connect(&app, &args).await;
+    let (radio_events_tx, mut radio_events) = mpsc::unbounded_channel();
 
     if let Some(ref mc) = mc {
         app.lock().await.sys("Ready! Type a message and press Enter.");
-        setup_subscriptions(mc, app.clone()).await;
+        setup_subscriptions(mc, radio_events_tx).await;
     } else {
         app.lock()
             .await
@@ -97,6 +103,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main loop
     loop {
+        if apply_queued_events(&mut *app.lock().await, &mut radio_events) {
+            bell();
+        }
+
         {
             let a = app.lock().await;
             terminal.draw(|f| draw(f, &*a))?;

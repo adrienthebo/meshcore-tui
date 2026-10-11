@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use chrono::Local;
 use meshcore_rs::events::{
-    AdvertisementData, ChannelMessage, Contact, ContactMessage, MsgSentInfo, PathUpdateData,
-    SelfInfo,
+    AdvertisementData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
+    PathUpdateData, SelfInfo,
 };
 
 use crate::input::InputLine;
@@ -134,14 +134,46 @@ impl App {
 
     // ── Radio events ─────────────────────────────────────────────────────────
 
-    pub fn on_contact_message(&mut self, msg: &ContactMessage) {
+    /// Apply a radio event; returns true when a chat message arrived
+    pub fn apply_radio_event(&mut self, payload: EventPayload) -> bool {
+        match payload {
+            EventPayload::ContactMessage(msg) => {
+                self.on_contact_message(&msg);
+                true
+            }
+            EventPayload::ChannelMessage(msg) => {
+                self.on_channel_message(&msg);
+                true
+            }
+            EventPayload::Advertisement(adv) => {
+                self.on_advertisement(&adv);
+                false
+            }
+            EventPayload::Contact(contact) => {
+                self.on_new_contact(contact);
+                false
+            }
+            EventPayload::Ack { tag } => {
+                self.on_ack(&tag);
+                false
+            }
+            EventPayload::PathUpdate(pu) => {
+                self.on_path_update(&pu);
+                false
+            }
+            // meshcore-rs defines many payloads the app doesn't subscribe to
+            _ => false,
+        }
+    }
+
+    fn on_contact_message(&mut self, msg: &ContactMessage) {
         let sender = self.resolve_sender(&msg.sender_prefix);
         self.rx_count += 1;
         self.push_message(sender, sanitize(&msg.text), MsgType::Incoming);
     }
 
     /// Channel messages carry the sender's name in the body as "name: text"
-    pub fn on_channel_message(&mut self, msg: &ChannelMessage) {
+    fn on_channel_message(&mut self, msg: &ChannelMessage) {
         let (sender, text) = match msg.text.split_once(": ") {
             Some((name, text)) => (sanitize(name), text),
             None => ("?".to_string(), msg.text.as_str()),
@@ -150,7 +182,7 @@ impl App {
         self.push_message(sender, sanitize(text), MsgType::Channel(msg.channel_idx));
     }
 
-    pub fn on_advertisement(&mut self, adv: &AdvertisementData) {
+    fn on_advertisement(&mut self, adv: &AdvertisementData) {
         let info = format!(
             "{} @{:.4},{:.4}",
             sanitize(&adv.name),
@@ -160,7 +192,7 @@ impl App {
         self.push_packet("ADV", 0, info);
     }
 
-    pub fn on_new_contact(&mut self, contact: Contact) {
+    fn on_new_contact(&mut self, contact: Contact) {
         let info = format!(
             "{} [{}] @{:.4},{:.4}",
             sanitize(&contact.adv_name),
@@ -173,11 +205,11 @@ impl App {
         self.contacts.push(contact);
     }
 
-    pub fn on_ack(&mut self, tag: &[u8; 4]) {
+    fn on_ack(&mut self, tag: &[u8; 4]) {
         self.push_packet("ACK", 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
     }
 
-    pub fn on_path_update(&mut self, pu: &PathUpdateData) {
+    fn on_path_update(&mut self, pu: &PathUpdateData) {
         let info = format!(
             "{} len={}",
             meshcore_rs::parsing::hex_encode(&pu.prefix),
@@ -273,31 +305,21 @@ mod tests {
 
     // ── Radio events ─────────────────────────────────────────────────────────
 
-    fn contact_message(prefix: [u8; 6], text: &str) -> ContactMessage {
-        ContactMessage {
-            sender_prefix: prefix,
-            path_len: 0,
-            txt_type: 0,
-            sender_timestamp: 0,
-            text: text.to_string(),
-            snr: None,
-            signature: None,
-        }
-    }
-
-    fn channel_message(channel_idx: u8, text: &str) -> ChannelMessage {
-        ChannelMessage {
-            channel_idx,
-            path_len: 0,
-            txt_type: 0,
-            sender_timestamp: 0,
-            text: text.to_string(),
-            snr: None,
-        }
-    }
-
     fn last_packet(app: &App) -> &PacketLogEntry {
         app.packets.last().expect("no packets")
+    }
+
+    #[test]
+    fn apply_radio_event_reports_only_chat_messages() {
+        let mut app = App::new(0);
+        assert!(app.apply_radio_event(EventPayload::ContactMessage(contact_message([1; 6], "hi"))));
+        assert!(app.apply_radio_event(EventPayload::ChannelMessage(channel_message(0, "Bob: hi"))));
+        assert!(!app.apply_radio_event(EventPayload::Ack { tag: [0; 4] }));
+        assert!(!app.apply_radio_event(EventPayload::Contact(contact("Alice", [2; 6]))));
+        assert!(!app.apply_radio_event(EventPayload::Time(0)));
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.packets.len(), 2);
+        assert_eq!(app.contacts.len(), 1);
     }
 
     #[test]

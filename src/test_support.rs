@@ -1,6 +1,29 @@
-use meshcore_rs::events::Contact;
+use meshcore_rs::events::{ChannelMessage, Contact, ContactMessage};
 
 use crate::app::{App, ChannelEntry};
+
+pub fn contact_message(prefix: [u8; 6], text: &str) -> ContactMessage {
+    ContactMessage {
+        sender_prefix: prefix,
+        path_len: 0,
+        txt_type: 0,
+        sender_timestamp: 0,
+        text: text.to_string(),
+        snr: None,
+        signature: None,
+    }
+}
+
+pub fn channel_message(channel_idx: u8, text: &str) -> ChannelMessage {
+    ChannelMessage {
+        channel_idx,
+        path_len: 0,
+        txt_type: 0,
+        sender_timestamp: 0,
+        text: text.to_string(),
+        snr: None,
+    }
+}
 
 pub fn contact(name: &str, key_prefix: [u8; 6]) -> Contact {
     let mut public_key = [0u8; 32];

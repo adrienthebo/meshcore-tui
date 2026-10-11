@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 
 use crate::app::{App, ChannelEntry};
@@ -167,76 +168,37 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
     Some(mc)
 }
 
-/// Subscribe to a radio event type and apply its payload to the app state
-async fn on_radio_event(
-    mc: &MeshCore,
-    app: &Arc<Mutex<App>>,
-    event_type: EventType,
-    apply: fn(&mut App, EventPayload),
-) {
-    let app = app.clone();
-    mc.subscribe(event_type, HashMap::new(), move |event| {
-        let app = app.clone();
-        tokio::spawn(async move {
-            apply(&mut *app.lock().await, event.payload);
-        });
-    })
-    .await;
-}
-
-/// Ring the terminal bell
-fn bell() {
-    print!("\x07");
-}
-
-pub async fn setup_subscriptions(mc: &MeshCore, app: Arc<Mutex<App>>) {
-    on_radio_event(mc, &app, EventType::ContactMsgRecv, |a, payload| {
-        if let EventPayload::ContactMessage(msg) = payload {
-            a.on_contact_message(&msg);
-            bell();
-        }
-    })
-    .await;
-
-    on_radio_event(mc, &app, EventType::ChannelMsgRecv, |a, payload| {
-        if let EventPayload::ChannelMessage(msg) = payload {
-            a.on_channel_message(&msg);
-            bell();
-        }
-    })
-    .await;
-
-    // Advertisements (0x80)
-    on_radio_event(mc, &app, EventType::Advertisement, |a, payload| {
-        if let EventPayload::Advertisement(adv) = payload {
-            a.on_advertisement(&adv);
-        }
-    })
-    .await;
-
-    // New contacts / adverts (0x8A PushCodeNewAdvert)
-    on_radio_event(mc, &app, EventType::NewContact, |a, payload| {
-        if let EventPayload::Contact(contact) = payload {
-            a.on_new_contact(contact);
-        }
-    })
-    .await;
-
-    on_radio_event(mc, &app, EventType::Ack, |a, payload| {
-        if let EventPayload::Ack { tag } = payload {
-            a.on_ack(&tag);
-        }
-    })
-    .await;
-
-    on_radio_event(mc, &app, EventType::PathUpdate, |a, payload| {
-        if let EventPayload::PathUpdate(pu) = payload {
-            a.on_path_update(&pu);
-        }
-    })
-    .await;
+/// Forward the radio events the app displays into `events`, for the main loop to apply
+pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPayload>) {
+    let event_types = [
+        EventType::ContactMsgRecv,
+        EventType::ChannelMsgRecv,
+        // Advertisements (0x80)
+        EventType::Advertisement,
+        // New contacts / adverts (0x8A PushCodeNewAdvert)
+        EventType::NewContact,
+        EventType::Ack,
+        EventType::PathUpdate,
+    ];
+    for event_type in event_types {
+        let events = events.clone();
+        mc.subscribe(event_type, HashMap::new(), move |event| {
+            // Sending only fails once the main loop has exited, when events no longer matter
+            let _ = events.send(event.payload);
+        })
+        .await;
+    }
 
     mc.start_auto_message_fetching().await;
+}
+
+/// Apply queued radio events to the app; returns true if a chat message arrived
+pub fn apply_queued_events(app: &mut App, events: &mut UnboundedReceiver<EventPayload>) -> bool {
+    let mut message_arrived = false;
+    while let Ok(payload) = events.try_recv() {
+        message_arrived |= app.apply_radio_event(payload);
+    }
+    message_arrived
 }
 
 pub async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
@@ -266,5 +228,40 @@ pub async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
             Ok(_) => app.lock().await.on_channel_sent(channel, text),
             Err(e) => app.lock().await.err(&format!("Channel send failed: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::*;
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn queued_events_are_applied_in_arrival_order() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(EventPayload::ChannelMessage(channel_message(0, "Alice: first"))).unwrap();
+        tx.send(EventPayload::ChannelMessage(channel_message(0, "Bob: second"))).unwrap();
+        let mut app = App::new(0);
+        assert!(apply_queued_events(&mut app, &mut rx));
+        let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn queued_events_without_chat_messages_do_not_alert() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(EventPayload::Ack { tag: [0; 4] }).unwrap();
+        let mut app = App::new(0);
+        assert!(!apply_queued_events(&mut app, &mut rx));
+        assert_eq!(app.packets.len(), 1);
+    }
+
+    #[test]
+    fn empty_queue_changes_nothing() {
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let mut app = App::new(0);
+        assert!(!apply_queued_events(&mut app, &mut rx));
+        assert!(app.messages.is_empty());
     }
 }
