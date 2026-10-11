@@ -3,6 +3,7 @@ mod commands;
 mod input;
 mod radio;
 mod stats;
+mod tab_bar;
 #[cfg(test)]
 mod test_support;
 mod text;

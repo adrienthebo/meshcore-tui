@@ -2,12 +2,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar, Tabs},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, MsgType};
+use crate::tab_bar::TabBar;
 use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
 use crate::view::{Panel, Tab};
@@ -20,7 +21,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // status
-            Constraint::Length(1), // tab bar
+            Constraint::Length(2), // tab bar
             Constraint::Min(0),    // tab
         ])
         .split(f.area());
@@ -35,12 +36,12 @@ pub fn draw(f: &mut Frame, app: &App) {
 /// Each tab's title, numbered with the digit that shows it alongside Alt
 fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let titles = Tab::ALL.iter().enumerate().map(|(i, tab)| format!("{} {}", i + 1, tab.title()));
-    let tabs = Tabs::new(titles)
-        .select(Tab::ALL.iter().position(|tab| *tab == app.tab))
-        .style(Style::default().fg(theme.muted))
-        .highlight_style(Style::default().fg(theme.focus).add_modifier(Modifier::BOLD));
-    f.render_widget(tabs, area);
+    let titles: Vec<&str> = Tab::ALL.iter().map(|tab| tab.title()).collect();
+    let selected = Tab::ALL.iter().position(|tab| *tab == app.tab).unwrap_or_default();
+    let bar = TabBar::new(&titles, selected)
+        .active_style(Style::default().fg(theme.focus))
+        .rule_style(Style::default().fg(theme.muted));
+    f.render_widget(bar, area);
 }
 
 fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
@@ -701,11 +702,14 @@ mod tests {
         app.overview.focus = Panel::Contacts;
         let backend = render_panel(80, 24, |f, _| draw(f, &app));
         let buffer = backend.buffer();
-        // Status border, the current tab's title, then the focused contacts border and the unfocused messages border
+        // Status border, the current tab's outline over the muted rule, then the
+        // focused contacts border and the unfocused messages border
         assert_eq!(buffer[(0, 0)].fg, app.theme.status_border);
         assert_eq!(buffer[(1, 3)].fg, app.theme.focus);
-        assert_eq!(buffer[(79, 4)].fg, app.theme.focus);
-        assert_eq!(buffer[(0, 4)].fg, app.theme.messages_border);
+        assert_eq!(buffer[(1, 4)].fg, app.theme.focus);
+        assert_eq!(buffer[(79, 4)].fg, app.theme.muted);
+        assert_eq!(buffer[(79, 5)].fg, app.theme.focus);
+        assert_eq!(buffer[(0, 5)].fg, app.theme.messages_border);
     }
 
     #[test]
