@@ -10,7 +10,8 @@ use crate::update::Action;
 /// interpret keys, and changes the App only by returning an Action.
 pub trait View {
     fn title(&self) -> &str;
-    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme);
+    /// Draw into `area`; `focused` views get keys first and show it, e.g. in their border
+    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool);
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult;
 }
 
@@ -84,7 +85,7 @@ mod tests {
         fn title(&self) -> &str {
             "Probe"
         }
-        fn draw(&self, _: &mut Frame, _: Rect, _: &App, _: &Theme) {}
+        fn draw(&self, _: &mut Frame, _: Rect, _: &App, _: &Theme, _: bool) {}
         fn handle_key(&mut self, key: KeyEvent, _: &App) -> KeyResult {
             match key.code {
                 KeyCode::Char('x') => KeyResult::Action(Action::Deselect),

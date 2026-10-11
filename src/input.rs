@@ -1,4 +1,12 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{layout::Rect, Frame};
 use unicode_width::UnicodeWidthStr;
+
+use crate::app::App;
+use crate::theme::Theme;
+use crate::ui::draw_input;
+use crate::update::Action;
+use crate::view::{KeyResult, View};
 
 /// Single-line text input with a cursor measured in chars
 #[derive(Debug, Default)]
@@ -69,6 +77,31 @@ impl InputLine {
     pub fn cursor_column(&self) -> u16 {
         let before = &self.text[..self.byte_offset(self.cursor)];
         UnicodeWidthStr::width(before) as u16
+    }
+}
+
+impl View for InputLine {
+    fn title(&self) -> &str {
+        "Input"
+    }
+
+    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, _focused: bool) {
+        draw_input(f, app, self, theme, area);
+    }
+
+    /// Edit the line; Enter submits it
+    fn handle_key(&mut self, key: KeyEvent, _app: &App) -> KeyResult {
+        match key.code {
+            KeyCode::Enter if !self.is_empty() => return KeyResult::Action(Action::Submit(self.take())),
+            KeyCode::Char(c) => self.insert(c),
+            KeyCode::Backspace => self.backspace(),
+            KeyCode::Left => self.left(),
+            KeyCode::Right => self.right(),
+            KeyCode::Home => self.home(),
+            KeyCode::End => self.end(),
+            _ => return KeyResult::Ignored,
+        }
+        KeyResult::Handled
     }
 }
 
@@ -156,5 +189,37 @@ mod tests {
         assert_eq!(line.take(), "héllo");
         assert!(line.is_empty());
         assert_eq!(line.cursor, 0);
+    }
+
+    // ── Keys ─────────────────────────────────────────────────────────────────
+
+    fn press(line: &mut InputLine, code: KeyCode) -> KeyResult {
+        line.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), &App::new(0))
+    }
+
+    #[test]
+    fn keys_edit_the_line() {
+        let mut line = InputLine::default();
+        for c in "hi!".chars() {
+            assert_eq!(press(&mut line, KeyCode::Char(c)), KeyResult::Handled);
+        }
+        press(&mut line, KeyCode::Backspace);
+        press(&mut line, KeyCode::Home);
+        press(&mut line, KeyCode::Char('>'));
+        assert_eq!(line.as_str(), ">hi");
+    }
+
+    #[test]
+    fn enter_submits_and_clears_the_line() {
+        let mut line = typed("x");
+        assert_eq!(press(&mut line, KeyCode::Enter), KeyResult::Action(Action::Submit("x".to_string())));
+        assert!(line.is_empty());
+    }
+
+    #[test]
+    fn enter_on_an_empty_line_and_other_keys_are_ignored() {
+        let mut line = InputLine::default();
+        assert_eq!(press(&mut line, KeyCode::Enter), KeyResult::Ignored);
+        assert_eq!(press(&mut line, KeyCode::Up), KeyResult::Ignored);
     }
 }
