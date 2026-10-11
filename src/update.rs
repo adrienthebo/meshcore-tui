@@ -43,13 +43,15 @@ pub enum Action {
     Submit(String),
     /// Address messages to the contact at this index
     SelectContact(usize),
+    /// Address messages to the contact with this public key and show the Overview to write them
+    MessageContact([u8; 32]),
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
 pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Key(key) => match ui.handle_key(key, app) {
-            Some(action) => apply_action(app, action),
+            Some(action) => apply_action(app, ui, action),
             None => Vec::new(),
         },
         Msg::Radio(payload) => {
@@ -67,11 +69,18 @@ pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
     }
 }
 
-fn apply_action(app: &mut App, action: Action) -> Vec<Effect> {
+fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
     match action {
         Action::Quit => app.should_quit = true,
         Action::Submit(line) => return app.submit(&line).into_iter().collect(),
         Action::SelectContact(idx) => app.select_contact(idx),
+        Action::MessageContact(key) => match app.contacts.iter().position(|c| c.public_key == key) {
+            Some(idx) => {
+                app.select_contact(idx);
+                ui.show_overview();
+            }
+            None => app.err("That contact is no longer in the list"),
+        },
     }
     Vec::new()
 }
@@ -140,10 +149,30 @@ mod tests {
 
     #[test]
     fn select_contact_changes_the_selection() {
-        let mut app = app_with_contacts(2);
-        apply_action(&mut app, Action::SelectContact(1));
+        let (mut app, mut ui) = (app_with_contacts(2), test_ui());
+        apply_action(&mut app, &mut ui, Action::SelectContact(1));
         assert_eq!(app.selected_index(), Some(1));
-        apply_action(&mut app, Action::SelectContact(5));
+        apply_action(&mut app, &mut ui, Action::SelectContact(5));
         assert_eq!(app.selected_key, None);
+    }
+
+    #[test]
+    fn message_contact_selects_it_and_shows_the_overview() {
+        let (mut app, mut ui) = (app_with_contacts(3), test_ui());
+        ui.active = 1;
+        let key = app.contacts[2].public_key;
+        apply_action(&mut app, &mut ui, Action::MessageContact(key));
+        assert_eq!(app.selected_index(), Some(2));
+        assert_eq!(ui.active_tab().title(), "Overview");
+    }
+
+    #[test]
+    fn message_contact_that_has_gone_stays_put() {
+        let (mut app, mut ui) = (app_with_contacts(1), test_ui());
+        ui.active = 1;
+        apply_action(&mut app, &mut ui, Action::MessageContact([9; 32]));
+        assert_eq!(app.selected_key, None);
+        assert_eq!(ui.active, 1);
+        assert_eq!(last_message(&app), "That contact is no longer in the list");
     }
 }

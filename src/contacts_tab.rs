@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use chrono::Utc;
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use meshcore_rs::events::Contact;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -15,14 +15,26 @@ use crate::app::{AdvertEntry, App};
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
+use crate::update::Action;
 use crate::view::{KeyResult, View};
 
 /// Every contact the radio knows, newest advert first, above the adverts heard
 #[derive(Debug, Default)]
 pub struct ContactsTab {
+    focus: Section,
     /// The browsed row and how far the table has scrolled; drawing scrolls it
     /// to keep the browsed row in view
     table: RefCell<TableState>,
+    /// How many of the newest adverts are scrolled past
+    adverts_scroll: usize,
+}
+
+/// The part of the Contacts tab that has keyboard focus
+#[derive(Debug, Default, PartialEq)]
+enum Section {
+    #[default]
+    Table,
+    Adverts,
 }
 
 impl View for ContactsTab {
@@ -34,8 +46,60 @@ impl View for ContactsTab {
         draw_contacts_tab(f, app, self, theme, Utc::now().timestamp(), area);
     }
 
-    fn handle_key(&mut self, _key: KeyEvent, _app: &App) -> KeyResult {
-        KeyResult::Ignored
+    /// Tab moves focus between the table and the adverts; ↑↓ browse contacts or
+    /// scroll adverts, and Enter messages the browsed contact
+    fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        match (key.code, &self.focus) {
+            (KeyCode::Tab, Section::Table) => self.focus = Section::Adverts,
+            (KeyCode::Tab, Section::Adverts) => self.focus = Section::Table,
+            (KeyCode::Up, Section::Table) => self.browse(app, Step::Up),
+            (KeyCode::Down, Section::Table) => self.browse(app, Step::Down),
+            (KeyCode::Enter, Section::Table) => {
+                return match self.browsed_contact(app) {
+                    Some(contact) => KeyResult::Action(Action::MessageContact(contact.public_key)),
+                    None => KeyResult::Ignored,
+                };
+            }
+            (KeyCode::Up, Section::Adverts) => self.adverts_scroll = self.adverts_scroll.saturating_sub(1),
+            (KeyCode::Down, Section::Adverts) => {
+                self.adverts_scroll = (self.adverts_scroll + 1).min(app.adverts.len().saturating_sub(1));
+            }
+            _ => return KeyResult::Ignored,
+        }
+        KeyResult::Handled
+    }
+
+    fn key_hints(&self) -> Vec<&'static str> {
+        match self.focus {
+            Section::Table => vec!["↑↓=browse", "Enter=message", "Tab=panel"],
+            Section::Adverts => vec!["↑↓=scroll", "Tab=panel"],
+        }
+    }
+}
+
+enum Step {
+    Up,
+    Down,
+}
+
+impl ContactsTab {
+    /// Move the browsed row, starting from the first when none is browsed
+    fn browse(&mut self, app: &App, step: Step) {
+        let Some(last) = app.contacts.len().checked_sub(1) else {
+            return;
+        };
+        let table = self.table.get_mut();
+        let row = match (table.selected(), step) {
+            (None, _) => 0,
+            (Some(row), Step::Up) => row.saturating_sub(1),
+            (Some(row), Step::Down) => (row + 1).min(last),
+        };
+        table.select(Some(row));
+    }
+
+    fn browsed_contact<'a>(&self, app: &'a App) -> Option<&'a Contact> {
+        let row = self.table.borrow().selected()?;
+        by_newest_advert(app).get(row).copied()
     }
 }
 
@@ -91,7 +155,7 @@ fn draw_contacts_tab(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme,
         .constraints([Constraint::Min(6), Constraint::Length(10)])
         .split(area);
     draw_contact_table(f, app, tab, theme, now, chunks[0]);
-    draw_adverts(f, &app.adverts, theme, chunks[1]);
+    draw_adverts(f, &app.adverts, tab, theme, chunks[1]);
 }
 
 fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme, now: i64, area: Rect) {
@@ -118,24 +182,22 @@ fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme
         Constraint::Length(5),
         Constraint::Length(19),
     ];
+    let border = if tab.focus == Section::Table { theme.focus } else { theme.contacts_border };
     let table = Table::new(rows, widths)
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
-        .block(panel(
-            theme,
-            format!(" Contacts ({}) ", app.contacts.len()),
-            theme.contacts_border,
-        ));
+        .block(panel(theme, format!(" Contacts ({}) ", app.contacts.len()), border));
     f.render_stateful_widget(table, area, &mut tab.table.borrow_mut());
 }
 
-/// Adverts, newest first; a new contact's shows what it added
-fn draw_adverts(f: &mut Frame, adverts: &[AdvertEntry], theme: &Theme, area: Rect) {
+/// Adverts, newest first from the scroll position; a new contact's shows what it added
+fn draw_adverts(f: &mut Frame, adverts: &[AdvertEntry], tab: &ContactsTab, theme: &Theme, area: Rect) {
     let visible = (area.height as usize).saturating_sub(2);
     let items: Vec<ListItem> = adverts
         .iter()
         .rev()
+        .skip(tab.adverts_scroll)
         .take(visible)
         .map(|a| {
             let (kind, detail) = match &a.new_contact {
@@ -160,7 +222,8 @@ fn draw_adverts(f: &mut Frame, adverts: &[AdvertEntry], theme: &Theme, area: Rec
             ]))
         })
         .collect();
-    f.render_widget(List::new(items).block(panel(theme, " Adverts ", theme.packets_border)), area);
+    let border = if tab.focus == Section::Adverts { theme.focus } else { theme.packets_border };
+    f.render_widget(List::new(items).block(panel(theme, " Adverts ", border)), area);
 }
 
 #[cfg(test)]
@@ -207,6 +270,73 @@ mod tests {
     #[test]
     fn contacts_and_adverts_newest_first() {
         insta::assert_snapshot!(render(&app_with_heard_contacts(), &ContactsTab::default(), 80, 16));
+    }
+
+    fn press(tab: &mut ContactsTab, app: &App, code: KeyCode) -> KeyResult {
+        tab.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), app)
+    }
+
+    fn browsed_name(tab: &ContactsTab, app: &App) -> Option<String> {
+        tab.browsed_contact(app).map(|c| c.adv_name.clone())
+    }
+
+    #[test]
+    fn arrows_browse_the_table_in_its_order_within_bounds() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        assert_eq!(browsed_name(&tab, &app), None);
+        assert_eq!(press(&mut tab, &app, KeyCode::Down), KeyResult::Handled);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Alice"));
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Hilltop"));
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Down);
+        }
+        assert_eq!(tab.table.borrow().selected(), Some(app.contacts.len() - 1));
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Up);
+        }
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Alice"));
+    }
+
+    #[test]
+    fn arrows_with_no_contacts_browse_nothing() {
+        let (mut tab, app) = (ContactsTab::default(), App::new(0));
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(tab.table.borrow().selected(), None);
+    }
+
+    #[test]
+    fn enter_messages_the_browsed_contact() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Down);
+        let hilltop = app.contacts.iter().find(|c| c.adv_name == "Hilltop").unwrap();
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Enter),
+            KeyResult::Action(Action::MessageContact(hilltop.public_key))
+        );
+    }
+
+    #[test]
+    fn tab_moves_focus_to_the_adverts_which_scroll_within_bounds() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        assert_eq!(tab.key_hints(), ["↑↓=browse", "Enter=message", "Tab=panel"]);
+        press(&mut tab, &app, KeyCode::Tab);
+        assert_eq!(tab.key_hints(), ["↑↓=scroll", "Tab=panel"]);
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Down);
+        }
+        assert_eq!(tab.adverts_scroll, app.adverts.len() - 1);
+        assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Up);
+        }
+        assert_eq!(tab.adverts_scroll, 0);
+        // The table keeps its browsed row while the adverts have focus
+        assert_eq!(tab.table.borrow().selected(), None);
+        press(&mut tab, &app, KeyCode::Tab);
+        assert_eq!(tab.focus, Section::Table);
     }
 
     #[test]

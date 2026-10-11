@@ -49,6 +49,11 @@ impl Ui {
         }
     }
 
+    /// Show the Overview, which Ui::new puts first
+    pub fn show_overview(&mut self) {
+        self.active = 0;
+    }
+
     pub fn active_tab(&self) -> &dyn View {
         self.tabs[self.active].as_ref()
     }
