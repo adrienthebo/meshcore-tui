@@ -183,14 +183,10 @@ impl App {
         self.push_message(sender, sanitize(text), MsgType::Channel(msg.channel_idx));
     }
 
+    /// A known contact advertised again; the push carries only their key
     fn on_advertisement(&mut self, adv: &AdvertisementData) {
-        let info = format!(
-            "{} @{:.4},{:.4}",
-            sanitize(&adv.name),
-            adv.lat as f64 / 1e6,
-            adv.lon as f64 / 1e6
-        );
-        self.push_packet("ADV", 0, info);
+        let who = self.resolve_key(&adv.public_key);
+        self.push_packet("ADV", 0, who);
     }
 
     fn on_new_contact(&mut self, contact: Contact) {
@@ -212,10 +208,15 @@ impl App {
 
     /// The radio found a new route to a contact; the push carries only their key
     fn on_path_update(&mut self, pu: &PathUpdateData) {
-        let mut prefix = [0u8; 6];
-        prefix.copy_from_slice(&pu.public_key[..6]);
-        let who = self.resolve_sender(&prefix);
+        let who = self.resolve_key(&pu.public_key);
         self.push_packet("PATH", 0, who);
+    }
+
+    /// Name the contact with this public key, falling back to its prefix in hex
+    fn resolve_key(&self, public_key: &[u8; 32]) -> String {
+        let mut prefix = [0u8; 6];
+        prefix.copy_from_slice(&public_key[..6]);
+        self.resolve_sender(&prefix)
     }
 
     pub fn on_direct_sent(&mut self, contact: &Contact, text: &str, info: &MsgSentInfo) {
@@ -358,7 +359,7 @@ mod tests {
         assert!(app.apply_radio_event(EventPayload::ChannelMessage(channel_message(0, "Bob: hi"))));
         assert!(!app.apply_radio_event(EventPayload::Ack { tag: [0; 4] }));
         assert!(!app.apply_radio_event(EventPayload::Contact(contact("Alice", [2; 6]))));
-        let adv = AdvertisementData { prefix: [3; 6], name: String::new(), lat: 0, lon: 0 };
+        let adv = AdvertisementData { public_key: [3; 32] };
         assert!(!app.apply_radio_event(EventPayload::Advertisement(adv)));
         let path = PathUpdateData { public_key: [2; 32] };
         assert!(!app.apply_radio_event(EventPayload::PathUpdate(path)));
@@ -401,17 +402,15 @@ mod tests {
     }
 
     #[test]
-    fn advertisement_logs_name_and_position() {
+    fn advertisement_names_the_contact() {
         let mut app = App::new(0);
-        app.on_advertisement(&AdvertisementData {
-            prefix: [1; 6],
-            name: "Repeater".to_string(),
-            lat: 52_008_900,
-            lon: 4_353_100,
-        });
-        let p = last_packet(&app);
-        assert_eq!(p.ptype, "ADV");
-        assert_eq!(p.info, "Repeater @52.0089,4.3531");
+        let repeater = contact("Repeater", [1; 6]);
+        app.on_advertisement(&AdvertisementData { public_key: repeater.public_key });
+        app.contacts.push(repeater.clone());
+        app.on_advertisement(&AdvertisementData { public_key: repeater.public_key });
+        let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
+        assert_eq!(infos, vec!["10101010101", "Repeater"]);
+        assert!(app.packets.iter().all(|p| p.ptype == "ADV"));
     }
 
     #[test]
