@@ -828,6 +828,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "getrandom",
  "insta",
  "meshcore-rs",
  "ratatui",

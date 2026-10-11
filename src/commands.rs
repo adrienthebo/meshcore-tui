@@ -6,13 +6,11 @@ use tokio::sync::Mutex;
 use crate::app::{App, ChannelEntry};
 use crate::text::sanitize;
 
-/// Simple pseudo-random byte (no external crate needed)
-fn rand_byte() -> u8 {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
-    (t ^ (t >> 8) ^ (t >> 16)) as u8
+/// Generate a channel secret from the operating system's secure random source
+fn random_secret() -> Result<[u8; 16], getrandom::Error> {
+    let mut secret = [0u8; 16];
+    getrandom::fill(&mut secret)?;
+    Ok(secret)
 }
 
 // ── Slash Commands ───────────────────────────────────────────────────────────
@@ -226,6 +224,20 @@ impl App {
     }
 }
 
+/// Program a channel, generating a secret if none was given; returns the secret used
+async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]>) -> Result<[u8; 16], String> {
+    let secret = secret
+        .map_or_else(random_secret, Ok)
+        .map_err(|e| format!("Could not generate channel secret: {}", e))?;
+    mc.commands()
+        .lock()
+        .await
+        .set_channel(idx, name, &secret)
+        .await
+        .map_err(|e| format!("Set channel: {}", e))?;
+    Ok(secret)
+}
+
 pub async fn handle_command(input: &str, app: &Arc<Mutex<App>>, mc: Option<&MeshCore>) {
     let cmd = match parse_command(input) {
         Ok(cmd) => cmd,
@@ -271,27 +283,18 @@ pub async fn handle_command(input: &str, app: &Arc<Mutex<App>>, mc: Option<&Mesh
             Ok(_) => app.lock().await.sys(&format!("Name set to: {}", name)),
             Err(e) => app.lock().await.err(&format!("Set name: {}", e)),
         },
-        Command::SetChannel { idx, name, secret } => {
-            let secret = secret.unwrap_or_else(|| {
-                let mut s = [0u8; 16];
-                for b in &mut s {
-                    *b = rand_byte();
-                }
-                s
-            });
-            match mc.commands().lock().await.set_channel(idx, &name, &secret).await {
-                Ok(_) => {
-                    let secret_hex = meshcore_rs::parsing::hex_encode(&secret);
-                    let mut a = app.lock().await;
-                    a.sys(&format!(
-                        "Channel #{} set: name='{}' secret={}",
-                        idx, name, secret_hex
-                    ));
-                    a.channels.insert(idx, ChannelEntry { name, secret });
-                }
-                Err(e) => app.lock().await.err(&format!("Set channel: {}", e)),
+        Command::SetChannel { idx, name, secret } => match set_channel(mc, idx, &name, secret).await {
+            Ok(secret) => {
+                let secret_hex = meshcore_rs::parsing::hex_encode(&secret);
+                let mut a = app.lock().await;
+                a.sys(&format!(
+                    "Channel #{} set: name='{}' secret={}",
+                    idx, name, secret_hex
+                ));
+                a.channels.insert(idx, ChannelEntry { name, secret });
             }
-        }
+            Err(e) => app.lock().await.err(&e),
+        },
         Command::GetChannel(idx) => match mc.commands().lock().await.get_channel(idx).await {
             Ok(info) => {
                 let name = sanitize(&info.name);
@@ -324,6 +327,17 @@ mod tests {
     use meshcore_rs::events::SelfInfo;
 
     // ── Slash commands ───────────────────────────────────────────────────────
+
+    #[test]
+    fn random_secret_is_not_a_repeated_byte() {
+        let secret = random_secret().unwrap();
+        assert!(secret.iter().any(|b| *b != secret[0]), "secret {:02x?} is one repeated byte", secret);
+    }
+
+    #[test]
+    fn random_secrets_differ_between_calls() {
+        assert_ne!(random_secret().unwrap(), random_secret().unwrap());
+    }
 
     #[test]
     fn every_command_name_and_alias_is_recognized() {
