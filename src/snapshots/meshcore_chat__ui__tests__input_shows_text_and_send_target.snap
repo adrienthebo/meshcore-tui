@@ -1,0 +1,7 @@
+---
+source: src/ui.rs
+expression: "render_panel(60, 3, |f, area| draw_input(f, &app, area))"
+---
+"┌ Send to: Alice (Enter=send, Tab=panel, ↑↓=contact, F1=des┐"
+"│hello                                                     │"
+"└──────────────────────────────────────────────────────────┘"

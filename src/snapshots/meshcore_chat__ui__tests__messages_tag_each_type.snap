@@ -1,0 +1,11 @@
+---
+source: src/ui.rs
+expression: "render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), area))"
+---
+"┌ Base — Public ───────────────────────────────────────────┐"
+"│12:34:56 [SYS] SYS: Connected                             │"
+"│12:34:56 [MSG] Alice: hi there                            │"
+"│12:34:56 [SND] → Alice: hello!                            │"
+"│12:34:56 [Ops] Carol: anyone on ops?                      │"
+"│12:34:56 [ERR] ERR: Send failed: timeout                  │"
+"└──────────────────────────────────────────────────────────┘"

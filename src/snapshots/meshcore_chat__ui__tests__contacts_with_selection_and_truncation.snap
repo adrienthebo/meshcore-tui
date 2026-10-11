@@ -1,0 +1,8 @@
+---
+source: src/ui.rs
+expression: "render_panel(24, 4, |f, area| draw_contacts(f, &app, area))"
+---
+"┌ Contacts (2) ────────┐"
+"│▶ Alice (a1a1a1a1)    │"
+"│  Bob the very long na│"
+"└──────────────────────┘"

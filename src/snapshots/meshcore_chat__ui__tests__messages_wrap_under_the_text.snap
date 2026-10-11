@@ -1,0 +1,10 @@
+---
+source: src/ui.rs
+expression: "render_panel(40, 6, |f, area| draw_messages(f, &app, area))"
+---
+"┌ Unknown — CH#0 ──────────────────────┐"
+"│12:34:56 [MSG] Alice: abcdefghijklmnop│"
+"│                      qrstuvwxyz012345│"
+"│                      6789            │"
+"│                                      │"
+"└──────────────────────────────────────┘"

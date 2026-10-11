@@ -310,12 +310,13 @@ mod tests {
     use crate::test_support::*;
     use crate::app::{ChatMessage, PacketLogEntry};
     use meshcore_rs::events::SelfInfo;
+    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
     // ── Rendering ────────────────────────────────────────────────────────────
 
     fn render(app: &App, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| draw(f, app)).unwrap();
         terminal.backend().to_string()
     }
@@ -373,13 +374,17 @@ mod tests {
         app
     }
 
-    /// Render one panel into a terminal of its own size and return its rows
-    fn render_panel(width: u16, height: u16, draw_panel: impl FnOnce(&mut Frame, Rect)) -> Vec<String> {
-        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    /// Render one panel into a terminal of its own size
+    fn render_panel(width: u16, height: u16, draw_panel: impl FnOnce(&mut Frame, Rect)) -> TestBackend {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| draw_panel(f, f.area())).unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+        terminal.backend().clone()
+    }
+
+    fn rows(backend: &TestBackend) -> Vec<String> {
+        let buffer = backend.buffer();
+        (0..buffer.area.height)
+            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
     }
 
@@ -395,21 +400,20 @@ mod tests {
 
     #[test]
     fn status_shows_connection_state() {
-        let rows = render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area));
-        assert_eq!(rows_containing(&rows, "● Connected"), 1);
-        let rows = render_panel(120, 3, |f, area| draw_status(f, &App::new(0), area));
-        assert_eq!(rows_containing(&rows, "○ Disconnected"), 1);
+        let connected = rows(&render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area)));
+        assert_eq!(rows_containing(&connected, "● Connected"), 1);
+        let offline = rows(&render_panel(120, 3, |f, area| draw_status(f, &App::new(0), area)));
+        assert_eq!(rows_containing(&offline, "○ Disconnected"), 1);
     }
 
     #[test]
-    fn status_shows_radio_settings_and_counters() {
-        let rows = render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area));
-        assert!(rows[1].contains("Port: /dev/ttyACM0 | 869.618 MHz | BW: 62.5 kHz | SF: 8 | CR: 5 | RX: 3 | TX: 1"));
+    fn status_bar() {
+        insta::assert_snapshot!(render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area)));
     }
 
     #[test]
     fn messages_title_shows_device_and_target() {
-        let rows = render_panel(60, 5, |f, area| draw_messages(f, &connected_app(), area));
+        let rows = rows(&render_panel(60, 5, |f, area| draw_messages(f, &connected_app(), area)));
         assert!(rows[0].contains(" Base — Public "));
     }
 
@@ -420,7 +424,7 @@ mod tests {
             .map(|i| chat_message("SYS", &format!("message {}", i), MsgType::System))
             .collect();
         // 8 rows minus borders leaves 6 visible messages: 24..=29
-        let rows = render_panel(60, 8, |f, area| draw_messages(f, &app, area));
+        let rows = rows(&render_panel(60, 8, |f, area| draw_messages(f, &app, area)));
         assert_eq!(rows_containing(&rows, "message 29"), 1);
         assert_eq!(rows_containing(&rows, "message 24"), 1);
         assert_eq!(rows_containing(&rows, "message 23"), 0);
@@ -428,45 +432,28 @@ mod tests {
 
     #[test]
     fn messages_tag_each_type() {
-        let rows = render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), area));
-        assert!(rows[1].contains("[SYS] SYS: Connected"));
-        assert!(rows[2].contains("[MSG] Alice: hi there"));
-        assert!(rows[3].contains("[SND] \u{2192} Alice: hello!"));
-        assert!(rows[4].contains("[Ops] Carol: anyone on ops?"));
-        assert!(rows[5].contains("[ERR] ERR: Send failed: timeout"));
+        insta::assert_snapshot!(render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), area)));
     }
 
     #[test]
-    fn wrapped_message_continues_under_the_text() {
+    fn messages_wrap_under_the_text() {
         let mut app = App::new(0);
         app.messages = vec![chat_message("Alice", "abcdefghijklmnopqrstuvwxyz0123456789", MsgType::Incoming)];
         // 38 columns inside the border; the 22-column prefix leaves 16 for text
-        let rows = render_panel(40, 6, |f, area| draw_messages(f, &app, area));
-        let indent = " ".repeat(22);
-        assert_eq!(rows[1], "│12:34:56 [MSG] Alice: abcdefghijklmnop│");
-        assert_eq!(rows[2], format!("│{}qrstuvwxyz012345│", indent));
-        assert_eq!(rows[3], format!("│{}6789{}│", indent, " ".repeat(12)));
+        insta::assert_snapshot!(render_panel(40, 6, |f, area| draw_messages(f, &app, area)));
     }
 
     #[test]
     fn contacts_title_counts_contacts() {
-        let rows = render_panel(30, 5, |f, area| draw_contacts(f, &connected_app(), area));
+        let rows = rows(&render_panel(30, 5, |f, area| draw_contacts(f, &connected_app(), area)));
         assert!(rows[0].contains(" Contacts (2) "));
     }
 
     #[test]
-    fn contacts_mark_only_the_selected_contact() {
+    fn contacts_with_selection_and_truncation() {
         let mut app = connected_app();
         app.selected_contact = Some(0);
-        let rows = render_panel(30, 5, |f, area| draw_contacts(f, &app, area));
-        assert!(rows[1].starts_with("│▶ Alice (a1a1a1a1)"));
-        assert_eq!(rows_containing(&rows, "▶"), 1);
-    }
-
-    #[test]
-    fn contact_lines_are_truncated_to_the_panel() {
-        let rows = render_panel(20, 5, |f, area| draw_contacts(f, &connected_app(), area));
-        assert_eq!(rows[2], "│  Bob the very lon│");
+        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(f, &app, area)));
     }
 
     #[test]
@@ -474,7 +461,7 @@ mod tests {
         let mut app = App::new(0);
         app.packets = (0..10).map(|i| packet("ACK", 0, &format!("packet {}", i))).collect();
         // 5 rows minus borders leaves 3 visible packets: 7..=9
-        let rows = render_panel(60, 5, |f, area| draw_packets(f, &app, area));
+        let rows = rows(&render_panel(60, 5, |f, area| draw_packets(f, &app, area)));
         assert!(rows[1].contains("packet 7"));
         assert!(rows[3].contains("packet 9"));
         assert_eq!(rows_containing(&rows, "packet 6"), 0);
@@ -487,9 +474,7 @@ mod tests {
         heard.rssi = -92;
         heard.snr = 5.25;
         app.packets = vec![packet("ACK", 0, "no signal"), heard];
-        let rows = render_panel(60, 4, |f, area| draw_packets(f, &app, area));
-        assert!(rows[1].contains("[ACK] H:0 | no signal"));
-        assert!(rows[2].contains("[ADV] H:1 R:-92dBm S:5.2dB | heard"));
+        insta::assert_snapshot!(render_panel(60, 4, |f, area| draw_packets(f, &app, area)));
     }
 
     #[test]
@@ -499,8 +484,6 @@ mod tests {
         for c in "hello".chars() {
             app.input.insert(c);
         }
-        let rows = render_panel(60, 3, |f, area| draw_input(f, &app, area));
-        assert!(rows[0].contains(" Send to: Alice "));
-        assert!(rows[1].starts_with("│hello "));
+        insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, area)));
     }
 }
