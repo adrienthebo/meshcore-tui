@@ -104,6 +104,6 @@ mod tests {
         assert!(update(&mut app, key(KeyCode::Char('i'))).is_empty());
         let effects = update(&mut app, key(KeyCode::Enter));
         assert!(matches!(&effects[..], [Effect::Send { text, .. }] if text == "hi"));
-        assert_eq!(app.input.as_str(), "");
+        assert_eq!(app.overview.input.as_str(), "");
     }
 }

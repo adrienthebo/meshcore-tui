@@ -7,33 +7,48 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, MsgType, Panel};
+use crate::app::{App, MsgType};
 use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
+use crate::view::{Panel, Tab};
 
 // ── TUI Rendering ────────────────────────────────────────────────────────────
 
+/// Draw the status bar, which every tab shares, above the tab on screen
 pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // status
+            Constraint::Length(3), // status
+            Constraint::Min(0),    // tab
+        ])
+        .split(f.area());
+
+    draw_status(f, app, chunks[0]);
+    match app.tab {
+        Tab::Overview => draw_overview(f, app, chunks[1]),
+    }
+}
+
+fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
             Constraint::Min(10),   // main
             Constraint::Length(7), // packets
             Constraint::Length(3), // input
         ])
-        .split(f.area());
+        .split(area);
 
     let diagnostics = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(40), Constraint::Length(50)])
-        .split(chunks[2]);
+        .split(chunks[1]);
 
-    draw_status(f, app, chunks[0]);
-    draw_main(f, app, chunks[1]);
+    draw_main(f, app, chunks[0]);
     draw_packets(f, app, diagnostics[0]);
     draw_radio(f, app, diagnostics[1]);
-    draw_input(f, app, chunks[3]);
+    draw_input(f, app, chunks[2]);
 }
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
@@ -168,7 +183,7 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     }
     let visible_items: Vec<ListItem> = items.into_iter().skip(start_idx).collect();
 
-    let bc = if app.panel == Panel::Messages {
+    let bc = if app.overview.focus== Panel::Messages {
         theme.focus
     } else {
         theme.messages_border
@@ -217,7 +232,7 @@ fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let cc = if app.panel == Panel::Contacts {
+    let cc = if app.overview.focus== Panel::Contacts {
         theme.focus
     } else {
         theme.contacts_border
@@ -272,7 +287,7 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let pc = if app.panel == Panel::Packets {
+    let pc = if app.overview.focus== Panel::Packets {
         theme.focus
     } else {
         theme.packets_border
@@ -396,11 +411,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
         app.target_label()
     );
-    let w = Paragraph::new(app.input.as_str())
+    let w = Paragraph::new(app.overview.input.as_str())
         .style(Style::default().fg(theme.text))
         .block(panel(theme, title, theme.input_border));
     f.render_widget(w, area);
-    f.set_cursor_position((area.x + app.input.cursor_column() + 1, area.y + 1));
+    f.set_cursor_position((area.x + app.overview.input.cursor_column() + 1, area.y + 1));
 }
 
 /// A panel with a rounded border and a bold title
@@ -593,7 +608,7 @@ mod tests {
         let mut app = connected_app();
         app.select_contact(0);
         for c in "hello".chars() {
-            app.input.insert(c);
+            app.overview.input.insert(c);
         }
         insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, area)));
     }
@@ -670,7 +685,7 @@ mod tests {
     fn panels_draw_with_the_apps_theme() {
         let mut app = connected_app();
         app.theme = Theme::VAPORWAVE;
-        app.panel = Panel::Contacts;
+        app.overview.focus= Panel::Contacts;
         let backend = render_panel(80, 24, |f, _| draw(f, &app));
         let buffer = backend.buffer();
         // Status border, then the focused contacts border, then the unfocused messages border

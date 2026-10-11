@@ -9,6 +9,7 @@ mod text;
 mod theme;
 mod ui;
 mod update;
+mod view;
 
 use std::io;
 use std::sync::Arc;

@@ -6,11 +6,11 @@ use meshcore_rs::events::{
     PathUpdateData, SelfInfo,
 };
 
-use crate::input::InputLine;
 use crate::stats::RadioStats;
 use crate::text::sanitize;
 use crate::theme::Theme;
 use crate::update::Effect;
+use crate::view::{Overview, Tab};
 
 /// Stored channel info
 #[derive(Clone, Debug)]
@@ -48,16 +48,10 @@ pub struct PacketLogEntry {
     pub info: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Panel {
-    Messages,
-    Contacts,
-    Packets,
-}
-
 pub struct App {
-    pub input: InputLine,
-    pub panel: Panel,
+    /// The view on screen
+    pub tab: Tab,
+    pub overview: Overview,
     pub messages: Vec<ChatMessage>,
     pub contacts: Vec<Contact>,
     pub channels: HashMap<u8, ChannelEntry>,
@@ -81,8 +75,8 @@ pub struct App {
 impl App {
     pub fn new(channel: u8) -> Self {
         Self {
-            input: InputLine::default(),
-            panel: Panel::Messages,
+            tab: Tab::Overview,
+            overview: Overview::default(),
             messages: Vec::new(),
             contacts: Vec::new(),
             channels: HashMap::new(),
