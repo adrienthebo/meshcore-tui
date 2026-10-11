@@ -79,50 +79,51 @@ impl Theme {
         graph_high: Color::Green,
     };
 
-    /// Neon pastels on the terminal's own background; needs a truecolor terminal
+    /// The vaporwave palette from mmtp's TUI (pkg/tui/shared/styles.go), on the
+    /// terminal's own background and text colour; needs a truecolor terminal
     pub const VAPORWAVE: Theme = Theme {
-        text: WHITE,
-        muted: DUSTY_VIOLET,
-        focus: HOT_PINK,
-        info: CYAN,
-        value: PALE_YELLOW,
-        good: MINT,
-        bad: CORAL,
+        text: Color::Reset,
+        muted: MARDI_GRAS,
+        focus: CERISE_PINK,
+        info: AQUAMARINE,
+        value: CERISE_PINK,
+        good: AQUAMARINE,
+        bad: PERSIAN_ROSE,
 
-        status_border: LAVENDER,
-        messages_border: LAVENDER,
-        contacts_border: LAVENDER,
-        packets_border: LAVENDER,
-        radio_border: LAVENDER,
-        input_border: CYAN,
+        status_border: MAYA_BLUE,
+        messages_border: MAYA_BLUE,
+        contacts_border: MAYA_BLUE,
+        packets_border: MAYA_BLUE,
+        radio_border: MAYA_BLUE,
+        input_border: MAYA_BLUE,
 
-        msg_incoming: CYAN,
-        msg_outgoing: MINT,
-        msg_channel: PALE_YELLOW,
+        msg_incoming: AQUAMARINE,
+        msg_outgoing: LAVENDER_INDIGO,
+        msg_channel: RAJAH,
 
-        packet_advert: HOT_PINK,
-        packet_ack: CYAN,
-        packet_sent: MINT,
-        packet_path: LAVENDER,
+        packet_advert: PINK_LAVENDER,
+        packet_ack: AQUAMARINE,
+        packet_sent: LAVENDER_INDIGO,
+        packet_path: RAJAH,
 
-        selected_fg: DEEP_PURPLE,
-        selected_bg: HOT_PINK,
+        selected_fg: Color::Reset,
+        selected_bg: RUSSIAN_VIOLET,
 
-        graph_low: CYAN,
-        graph_mid: LAVENDER,
-        graph_high: HOT_PINK,
+        graph_low: AQUAMARINE,
+        graph_mid: LAVENDER_INDIGO,
+        graph_high: PERSIAN_ROSE,
     };
 }
 
-const HOT_PINK: Color = Color::Rgb(0xff, 0x71, 0xce);
-const LAVENDER: Color = Color::Rgb(0xb9, 0x67, 0xff);
-const CYAN: Color = Color::Rgb(0x01, 0xcd, 0xfe);
-const MINT: Color = Color::Rgb(0x05, 0xff, 0xa1);
-const PALE_YELLOW: Color = Color::Rgb(0xff, 0xfb, 0x96);
-const CORAL: Color = Color::Rgb(0xff, 0x4f, 0x81);
-const DUSTY_VIOLET: Color = Color::Rgb(0x8c, 0x7b, 0xa8);
-const WHITE: Color = Color::Rgb(0xf4, 0xf0, 0xff);
-const DEEP_PURPLE: Color = Color::Rgb(0x1a, 0x10, 0x33);
+const RUSSIAN_VIOLET: Color = Color::Rgb(0x30, 0x03, 0x50);
+const MARDI_GRAS: Color = Color::Rgb(0x94, 0x16, 0x7f);
+const CERISE_PINK: Color = Color::Rgb(0xe9, 0x34, 0x79);
+const RAJAH: Color = Color::Rgb(0xf9, 0xac, 0x53);
+const PERSIAN_ROSE: Color = Color::Rgb(0xf6, 0x2e, 0x97);
+const LAVENDER_INDIGO: Color = Color::Rgb(0x9c, 0x5b, 0xff);
+const AQUAMARINE: Color = Color::Rgb(0x65, 0xf4, 0xda);
+const PINK_LAVENDER: Color = Color::Rgb(0xef, 0xb7, 0xff);
+const MAYA_BLUE: Color = Color::Rgb(0x5b, 0xc8, 0xf5);
 
 /// The themes selectable with --theme
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
