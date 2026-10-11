@@ -6,6 +6,7 @@ mod stats;
 #[cfg(test)]
 mod test_support;
 mod text;
+mod theme;
 mod ui;
 mod update;
 

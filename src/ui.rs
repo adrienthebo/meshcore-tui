@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, MsgType, Panel};
 use crate::text::{sanitize, truncate_to_width, wrap_to_width};
+use crate::theme::Theme;
 
 // ── TUI Rendering ────────────────────────────────────────────────────────────
 
@@ -50,26 +51,27 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         })
         .unwrap_or_default();
 
+    let theme = &app.theme;
     let spans = vec![
-        Span::styled("Port: ", Style::default().fg(Color::White)),
-        Span::styled(&app.port_info, Style::default().fg(Color::Cyan)),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Port: ", Style::default().fg(theme.text)),
+        Span::styled(&app.port_info, Style::default().fg(theme.info)),
+        Span::styled(" | ", Style::default().fg(theme.muted)),
         Span::styled(
             &freq_info,
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.value),
         ),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" | ", Style::default().fg(theme.muted)),
         Span::styled(
             format!("RX: {} | TX: {}", app.rx_count, app.tx_count),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.good),
         ),
-        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" | ", Style::default().fg(theme.muted)),
         Span::styled(
             if app.connected { "● Connected" } else { "○ Disconnected" },
             Style::default().fg(if app.connected {
-                Color::Green
+                theme.good
             } else {
-                Color::Red
+                theme.bad
             }),
         ),
     ];
@@ -78,7 +80,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .title(" Status ")
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(theme.status_border)),
     );
     f.render_widget(w, area);
 }
@@ -95,19 +97,20 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     let panel_width = (area.width as usize).saturating_sub(2); // border
+    let theme = &app.theme;
     let items: Vec<ListItem> = app
         .messages
         .iter()
         .map(|m| {
             let (tag, tag_c, name_c) = match &m.msg_type {
-                MsgType::Incoming => ("[MSG]".to_string(), Color::Cyan, Color::Cyan),
-                MsgType::Outgoing => ("[SND]".to_string(), Color::Green, Color::Green),
+                MsgType::Incoming => ("[MSG]".to_string(), theme.msg_incoming, theme.msg_incoming),
+                MsgType::Outgoing => ("[SND]".to_string(), theme.msg_outgoing, theme.msg_outgoing),
                 MsgType::Channel(ch) => {
                     let label = app.channel_label(*ch);
-                    (format!("[{}]", label), Color::Yellow, Color::Yellow)
+                    (format!("[{}]", label), theme.msg_channel, theme.msg_channel)
                 }
-                MsgType::System => ("[SYS]".to_string(), Color::DarkGray, Color::DarkGray),
-                MsgType::Error => ("[ERR]".to_string(), Color::Red, Color::Red),
+                MsgType::System => ("[SYS]".to_string(), theme.muted, theme.muted),
+                MsgType::Error => ("[ERR]".to_string(), theme.bad, theme.bad),
             };
 
             // Build prefix: "HH:MM:SS [TAG] sender: "
@@ -127,10 +130,10 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
                 .into_iter()
                 .enumerate()
                 .map(|(i, chunk)| {
-                    let body = Span::styled(chunk, Style::default().fg(Color::White));
+                    let body = Span::styled(chunk, Style::default().fg(theme.text));
                     if i == 0 {
                         Line::from(vec![
-                            Span::styled(&m.timestamp, Style::default().fg(Color::DarkGray)),
+                            Span::styled(&m.timestamp, Style::default().fg(theme.muted)),
                             Span::raw(" "),
                             Span::styled(tag.clone(), Style::default().fg(tag_c).add_modifier(Modifier::BOLD)),
                             Span::raw(" "),
@@ -145,7 +148,7 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
                         Line::from(vec![
                             Span::styled(
                                 continuation_indent.clone(),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(theme.muted),
                             ),
                             body,
                         ])
@@ -171,9 +174,9 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     let visible_items: Vec<ListItem> = items.into_iter().skip(start_idx).collect();
 
     let bc = if app.panel == Panel::Messages {
-        Color::Yellow
+        theme.focus
     } else {
-        Color::Cyan
+        theme.messages_border
     };
     let msg_w = List::new(visible_items).block(
         Block::default()
@@ -187,6 +190,7 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
 fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
     let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
     let selected = app.selected_index();
+    let theme = &app.theme;
     let citems: Vec<ListItem> = app
         .contacts
         .iter()
@@ -195,11 +199,11 @@ fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
             let sel = selected == Some(i);
             let sty = if sel {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.text)
             };
             let name = sanitize(&c.adv_name);
             let hex = c.prefix_hex();
@@ -223,9 +227,9 @@ fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let cc = if app.panel == Panel::Contacts {
-        Color::Yellow
+        theme.focus
     } else {
-        Color::Green
+        theme.contacts_border
     };
     let c_w = List::new(citems).block(
         Block::default()
@@ -238,6 +242,7 @@ fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
     let visible = (area.height as usize).saturating_sub(2);
+    let theme = &app.theme;
     let items: Vec<ListItem> = app
         .packets
         .iter()
@@ -248,14 +253,14 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
         .rev()
         .map(|p| {
             let tc = match p.ptype.as_str() {
-                "ADV" => Color::Magenta,
-                "ACK" => Color::Cyan,
-                "SND" => Color::Green,
-                "PATH" => Color::Blue,
-                _ => Color::White,
+                "ADV" => theme.packet_advert,
+                "ACK" => theme.packet_ack,
+                "SND" => theme.packet_sent,
+                "PATH" => theme.packet_path,
+                _ => theme.text,
             };
             ListItem::new(Line::from(vec![
-                Span::styled(&p.timestamp, Style::default().fg(Color::DarkGray)),
+                Span::styled(&p.timestamp, Style::default().fg(theme.muted)),
                 Span::raw(" "),
                 Span::styled(
                     format!("[{}]", p.ptype),
@@ -263,7 +268,7 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::styled(
                     format!(" H:{}", p.hops),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.muted),
                 ),
                 Span::styled(
                     if p.rssi != 0 || p.snr != 0.0 {
@@ -271,20 +276,20 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
                     } else {
                         String::new()
                     },
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.muted),
                 ),
                 Span::styled(
                     format!(" | {}", p.info),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(theme.text),
                 ),
             ]))
         })
         .collect();
 
     let pc = if app.panel == Panel::Packets {
-        Color::Yellow
+        theme.focus
     } else {
-        Color::Magenta
+        theme.packets_border
     };
     let w = List::new(items).block(
         Block::default()
@@ -315,16 +320,17 @@ fn noise_bar(dbm: i16, (low, high): (i16, i16)) -> u64 {
 }
 
 fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Radio ")
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_style(Style::default().fg(theme.radio_border));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let stats = &app.radio_stats;
     let Some(latest) = stats.latest else {
-        let waiting = Paragraph::new("waiting for radio stats…").style(Style::default().fg(Color::DarkGray));
+        let waiting = Paragraph::new("waiting for radio stats…").style(Style::default().fg(theme.muted));
         f.render_widget(waiting, inner);
         return;
     };
@@ -342,30 +348,45 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
         .map(|(min, max)| format!("  (min {} / max {})", min, max))
         .unwrap_or_default();
     let header = format!("Noise {} dBm{}", latest.noise_floor, range);
-    f.render_widget(Paragraph::new(header).style(Style::default().fg(Color::White)), rows[0]);
+    f.render_widget(Paragraph::new(header).style(Style::default().fg(theme.text)), rows[0]);
 
     let graph = min_max.map(|(min, max)| noise_graph_range(min, max));
     let bars: Vec<SparklineBar> = visible
         .iter()
-        .map(|r| SparklineBar::from(r.zip(graph).map(|(dbm, graph)| noise_bar(dbm, graph))))
+        .map(|r| match r.zip(graph) {
+            Some((dbm, graph)) => {
+                let bar = noise_bar(dbm, graph);
+                SparklineBar::from(bar).style(Style::default().fg(noise_bar_color(theme, bar)))
+            }
+            None => SparklineBar::from(None),
+        })
         .collect();
     let sparkline = Sparkline::default()
         .data(bars)
         .max(NOISE_BAR_FLOOR + NOISE_BAR_SCALE)
-        .direction(RenderDirection::RightToLeft)
-        .style(Style::default().fg(Color::Green));
+        .direction(RenderDirection::RightToLeft);
     f.render_widget(sparkline, rows[1]);
 
     let footer = format!(
         "RSSI {} dBm  SNR {:.2} dB   Air TX {}s RX {}s",
         latest.last_rssi, latest.last_snr, latest.tx_air_secs, latest.rx_air_secs
     );
-    f.render_widget(Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)), rows[2]);
+    f.render_widget(Paragraph::new(footer).style(Style::default().fg(theme.muted)), rows[2]);
+}
+
+/// Colour for a noise bar by how high it sits in the graph: low, middle or top third
+fn noise_bar_color(theme: &Theme, bar: u64) -> Color {
+    match (bar - NOISE_BAR_FLOOR) * 3 / NOISE_BAR_SCALE {
+        0 => theme.graph_low,
+        1 => theme.graph_mid,
+        _ => theme.graph_high,
+    }
 }
 
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let w = Paragraph::new(app.input.as_str())
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(theme.text))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -373,7 +394,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
                     " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
                     app.target_label()
                 ))
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(theme.input_border)),
         );
     f.render_widget(w, area);
     f.set_cursor_position((area.x + app.input.cursor_column() + 1, area.y + 1));

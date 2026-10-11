@@ -9,6 +9,7 @@ use meshcore_rs::events::{
 use crate::input::InputLine;
 use crate::stats::RadioStats;
 use crate::text::sanitize;
+use crate::theme::Theme;
 use crate::update::Effect;
 
 /// Stored channel info
@@ -73,6 +74,7 @@ pub struct App {
     pub tx_count: u32,
     pub connected: bool,
     pub radio_stats: RadioStats,
+    pub theme: Theme,
     pub should_quit: bool,
 }
 
@@ -95,6 +97,7 @@ impl App {
             tx_count: 0,
             connected: false,
             radio_stats: RadioStats::default(),
+            theme: Theme::CLASSIC,
             should_quit: false,
         }
     }
