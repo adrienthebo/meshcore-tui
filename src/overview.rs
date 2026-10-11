@@ -12,6 +12,7 @@ use crate::view::{KeyResult, View};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Panel {
     #[default]
+    Input,
     Messages,
     Contacts,
     Packets,
@@ -37,28 +38,36 @@ impl View for Overview {
         draw_overview(f, app, self, theme, area);
     }
 
-    /// Tab moves focus between panels and F1 deselects; the contact list gets
-    /// keys while it has focus, and the input line gets the rest
+    /// The panel with focus gets keys first; Overview takes the ones it ignores:
+    /// Tab moves focus between panels and F1 deselects
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        let result = self.focused_panel().handle_key(key, app);
+        if result != KeyResult::Ignored {
+            return result;
+        }
         match key.code {
             KeyCode::Tab => {
                 self.focus = match self.focus {
+                    Panel::Input => Panel::Messages,
                     Panel::Messages => Panel::Contacts,
                     Panel::Contacts => Panel::Packets,
-                    Panel::Packets => Panel::Messages,
+                    Panel::Packets => Panel::Input,
                 };
                 KeyResult::Handled
             }
             KeyCode::F(1) => KeyResult::Action(Action::Deselect),
-            _ => {
-                if self.focus == Panel::Contacts {
-                    let result = self.contacts.handle_key(key, app);
-                    if result != KeyResult::Ignored {
-                        return result;
-                    }
-                }
-                self.input.handle_key(key, app)
-            }
+            _ => KeyResult::Ignored,
+        }
+    }
+}
+
+impl Overview {
+    fn focused_panel(&mut self) -> &mut dyn View {
+        match self.focus {
+            Panel::Input => &mut self.input,
+            Panel::Messages => &mut self.messages,
+            Panel::Contacts => &mut self.contacts,
+            Panel::Packets => &mut self.packets,
         }
     }
 }
@@ -159,12 +168,22 @@ mod tests {
     // ── Overview ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn typing_reaches_the_input_line_whichever_panel_has_focus() {
+    fn typing_reaches_the_input_line_only_while_it_has_focus() {
         let (mut overview, app) = (Overview::default(), App::new(0));
+        assert_eq!(overview.focus, Panel::Input);
         press(&mut overview, &app, KeyCode::Char('a'));
         overview.focus = Panel::Contacts;
-        assert_eq!(press(&mut overview, &app, KeyCode::Char('b')), KeyResult::Handled);
-        assert_eq!(overview.input.as_str(), "ab");
+        assert_eq!(press(&mut overview, &app, KeyCode::Char('b')), KeyResult::Ignored);
+        assert_eq!(overview.input.as_str(), "a");
+    }
+
+    #[test]
+    fn keys_the_focused_panel_ignores_reach_the_overview() {
+        let (mut overview, app) = (Overview::default(), app_with_contacts(1));
+        // The input line ignores Tab and F1
+        assert_eq!(press(&mut overview, &app, KeyCode::F(1)), KeyResult::Action(Action::Deselect));
+        assert_eq!(press(&mut overview, &app, KeyCode::Tab), KeyResult::Handled);
+        assert_eq!(overview.focus, Panel::Messages);
     }
 
     #[test]
@@ -180,12 +199,12 @@ mod tests {
     #[test]
     fn tab_cycles_panels() {
         let (mut overview, app) = (Overview::default(), App::new(0));
-        press(&mut overview, &app, KeyCode::Tab);
-        assert_eq!(overview.focus, Panel::Contacts);
-        press(&mut overview, &app, KeyCode::Tab);
-        assert_eq!(overview.focus, Panel::Packets);
-        press(&mut overview, &app, KeyCode::Tab);
-        assert_eq!(overview.focus, Panel::Messages);
+        let mut order = Vec::new();
+        for _ in 0..4 {
+            press(&mut overview, &app, KeyCode::Tab);
+            order.push(overview.focus.clone());
+        }
+        assert_eq!(order, [Panel::Messages, Panel::Contacts, Panel::Packets, Panel::Input]);
     }
 
     #[test]

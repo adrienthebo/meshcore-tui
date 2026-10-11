@@ -68,7 +68,7 @@ pub fn draw_overview(f: &mut Frame, app: &App, overview: &Overview, theme: &Them
     overview.contacts.draw(f, main[1], app, theme, focused(Panel::Contacts));
     overview.packets.draw(f, diagnostics[0], app, theme, focused(Panel::Packets));
     overview.radio.draw(f, diagnostics[1], app, theme, false);
-    overview.input.draw(f, chunks[2], app, theme, false);
+    overview.input.draw(f, chunks[2], app, theme, focused(Panel::Input));
 }
 
 fn draw_status(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -410,16 +410,20 @@ fn noise_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -90.0, -120.0)
 }
 
-pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, area: Rect) {
+/// The input line, with the terminal cursor in it while it has focus
+pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, focused: bool, area: Rect) {
     let title = format!(
         " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
         app.target_label()
     );
+    let border = if focused { theme.focus } else { theme.input_border };
     let w = Paragraph::new(input.as_str())
         .style(Style::default().fg(theme.text))
-        .block(panel(theme, title, theme.input_border));
+        .block(panel(theme, title, border));
     f.render_widget(w, area);
-    f.set_cursor_position((area.x + input.cursor_column() + 1, area.y + 1));
+    if focused {
+        f.set_cursor_position((area.x + input.cursor_column() + 1, area.y + 1));
+    }
 }
 
 /// A panel with a rounded border and a bold title
@@ -615,7 +619,7 @@ mod tests {
         for c in "hello".chars() {
             input.insert(c);
         }
-        insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, &input, &Theme::CLASSIC, area)));
+        insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, &input, &Theme::CLASSIC, true, area)));
     }
 
     // ── Radio panel ──────────────────────────────────────────────────────────
@@ -704,6 +708,14 @@ mod tests {
         assert_eq!(buffer[(79, 4)].fg, ui.theme.muted);
         assert_eq!(buffer[(79, 5)].fg, ui.theme.focus);
         assert_eq!(buffer[(0, 5)].fg, ui.theme.messages_border);
+    }
+
+    #[test]
+    fn input_border_shows_focus() {
+        let (app, input, theme) = (App::new(0), InputLine::default(), Theme::VAPORWAVE);
+        let border = |focused| render_panel(60, 3, |f, area| draw_input(f, &app, &input, &theme, focused, area)).buffer()[(0, 0)].fg;
+        assert_eq!(border(true), theme.focus);
+        assert_eq!(border(false), theme.input_border);
     }
 
     #[test]

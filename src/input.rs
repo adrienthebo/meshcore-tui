@@ -85,8 +85,8 @@ impl View for InputLine {
         "Input"
     }
 
-    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, _focused: bool) {
-        draw_input(f, app, self, theme, area);
+    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool) {
+        draw_input(f, app, self, theme, focused, area);
     }
 
     /// Edit the line; Enter submits it
