@@ -42,10 +42,10 @@ pub struct Theme {
     pub selected_fg: Color,
     pub selected_bg: Color,
 
-    /// Noise floor bars, from the bottom of the graph's range to the top
-    pub graph_low: Color,
-    pub graph_mid: Color,
-    pub graph_high: Color,
+    /// Signal readings (RSSI, SNR, noise floor) from poor through fair to good
+    pub quality_poor: Color,
+    pub quality_fair: Color,
+    pub quality_good: Color,
 }
 
 impl Theme {
@@ -80,9 +80,9 @@ impl Theme {
         selected_fg: Color::Black,
         selected_bg: Color::Cyan,
 
-        graph_low: Color::Green,
-        graph_mid: Color::Green,
-        graph_high: Color::Green,
+        quality_poor: Color::Red,
+        quality_fair: Color::Yellow,
+        quality_good: Color::Green,
     };
 
     /// The vaporwave palette from mmtp's TUI (pkg/tui/shared/styles.go), on the
@@ -117,10 +117,37 @@ impl Theme {
         selected_fg: Color::Reset,
         selected_bg: RUSSIAN_VIOLET,
 
-        graph_low: AQUAMARINE,
-        graph_mid: LAVENDER_INDIGO,
-        graph_high: PERSIAN_ROSE,
+        quality_poor: PERSIAN_ROSE,
+        quality_fair: RAJAH,
+        quality_good: AQUAMARINE,
     };
+
+    /// Colour for a reading's quality, from 0.0 (poor) to 1.0 (good). RGB colours
+    /// blend smoothly; named colours can't be blended, so they step in thirds.
+    pub fn quality(&self, quality: f32) -> Color {
+        let quality = quality.clamp(0.0, 1.0);
+        match (self.quality_poor, self.quality_fair, self.quality_good) {
+            (poor @ Color::Rgb(..), fair @ Color::Rgb(..), good @ Color::Rgb(..)) => {
+                if quality < 0.5 {
+                    blend(poor, fair, quality * 2.0)
+                } else {
+                    blend(fair, good, quality * 2.0 - 1.0)
+                }
+            }
+            _ if quality < 1.0 / 3.0 => self.quality_poor,
+            _ if quality < 2.0 / 3.0 => self.quality_fair,
+            _ => self.quality_good,
+        }
+    }
+}
+
+/// The colour `t` of the way from `start` to `end`; both must be RGB
+fn blend(start: Color, end: Color, t: f32) -> Color {
+    let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) = (start, end) else {
+        return start;
+    };
+    let mix = |a: u8, b: u8| (a as f32 + t * (b as f32 - a as f32)).round() as u8;
+    Color::Rgb(mix(r1, r2), mix(g1, g2), mix(b1, b2))
 }
 
 const RUSSIAN_VIOLET: Color = Color::Rgb(0x30, 0x03, 0x50);
@@ -147,5 +174,35 @@ impl ThemeName {
             ThemeName::Vaporwave => Theme::VAPORWAVE,
             ThemeName::Classic => Theme::CLASSIC,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vaporwave_quality_blends_from_poor_through_fair_to_good() {
+        let theme = Theme::VAPORWAVE;
+        assert_eq!(theme.quality(0.0), PERSIAN_ROSE);
+        assert_eq!(theme.quality(0.5), RAJAH);
+        assert_eq!(theme.quality(1.0), AQUAMARINE);
+        // Halfway from Persian rose (f6 2e 97) to Rajah (f9 ac 53)
+        assert_eq!(theme.quality(0.25), Color::Rgb(0xf8, 0x6d, 0x75));
+    }
+
+    #[test]
+    fn quality_outside_the_range_is_clamped() {
+        let theme = Theme::VAPORWAVE;
+        assert_eq!(theme.quality(-1.0), PERSIAN_ROSE);
+        assert_eq!(theme.quality(2.0), AQUAMARINE);
+    }
+
+    #[test]
+    fn classic_quality_steps_through_named_colours() {
+        let theme = Theme::CLASSIC;
+        assert_eq!(theme.quality(0.1), Color::Red);
+        assert_eq!(theme.quality(0.5), Color::Yellow);
+        assert_eq!(theme.quality(0.9), Color::Green);
     }
 }

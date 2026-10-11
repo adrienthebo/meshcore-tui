@@ -325,16 +325,20 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
     let range = min_max
         .map(|(min, max)| format!("  (min {} / max {})", min, max))
         .unwrap_or_default();
-    let header = format!("Noise {} dBm{}", latest.noise_floor, range);
-    f.render_widget(Paragraph::new(header).style(Style::default().fg(theme.text)), rows[0]);
+    let noise_colour = |dbm: i16| theme.quality(noise_quality(dbm));
+    let header = Line::from(vec![
+        Span::styled("Noise ", Style::default().fg(theme.text)),
+        Span::styled(format!("{} dBm", latest.noise_floor), Style::default().fg(noise_colour(latest.noise_floor))),
+        Span::styled(range, Style::default().fg(theme.text)),
+    ]);
+    f.render_widget(Paragraph::new(header), rows[0]);
 
     let graph = min_max.map(|(min, max)| noise_graph_range(min, max));
     let bars: Vec<SparklineBar> = visible
         .iter()
         .map(|r| match r.zip(graph) {
             Some((dbm, graph)) => {
-                let bar = noise_bar(dbm, graph);
-                SparklineBar::from(bar).style(Style::default().fg(noise_bar_color(theme, bar)))
+                SparklineBar::from(noise_bar(dbm, graph)).style(Style::default().fg(noise_colour(dbm)))
             }
             None => SparklineBar::from(None),
         })
@@ -345,20 +349,38 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
         .direction(RenderDirection::RightToLeft);
     f.render_widget(sparkline, rows[1]);
 
-    let footer = format!(
-        "RSSI {} dBm  SNR {:.2} dB   Air TX {}s RX {}s",
-        latest.last_rssi, latest.last_snr, latest.tx_air_secs, latest.rx_air_secs
-    );
-    f.render_widget(Paragraph::new(footer).style(Style::default().fg(theme.muted)), rows[2]);
+    let muted = Style::default().fg(theme.muted);
+    let rssi_colour = theme.quality(rssi_quality(latest.last_rssi));
+    let snr_colour = theme.quality(snr_quality(latest.last_snr));
+    let footer = Line::from(vec![
+        Span::styled("RSSI ", muted),
+        Span::styled(format!("{} dBm", latest.last_rssi), Style::default().fg(rssi_colour)),
+        Span::styled("  SNR ", muted),
+        Span::styled(format!("{:.2} dB", latest.last_snr), Style::default().fg(snr_colour)),
+        Span::styled(format!("   Air TX {}s RX {}s", latest.tx_air_secs, latest.rx_air_secs), muted),
+    ]);
+    f.render_widget(Paragraph::new(footer), rows[2]);
 }
 
-/// Colour for a noise bar by how high it sits in the graph: low, middle or top third
-fn noise_bar_color(theme: &Theme, bar: u64) -> Color {
-    match (bar - NOISE_BAR_FLOOR) * 3 / NOISE_BAR_SCALE {
-        0 => theme.graph_low,
-        1 => theme.graph_mid,
-        _ => theme.graph_high,
-    }
+/// How good a reading is, from 0.0 at `poor` to 1.0 at `good`, linear between and
+/// clamped outside; `poor` may be above `good` for readings where lower is better
+fn quality(value: f32, poor: f32, good: f32) -> f32 {
+    ((value - poor) / (good - poor)).clamp(0.0, 1.0)
+}
+
+/// RSSI from the edge of LoRa reception up to a strong local signal
+fn rssi_quality(dbm: i8) -> f32 {
+    quality(dbm as f32, -120.0, -60.0)
+}
+
+/// SNR from below what SF7 can decode (about -7.5 dB) up to a clean link
+fn snr_quality(db: f32) -> f32 {
+    quality(db, -10.0, 10.0)
+}
+
+/// Noise floor, where lower is better, down to the firmware's lowest reading of -120 dBm
+fn noise_quality(dbm: i16) -> f32 {
+    quality(dbm as f32, -90.0, -120.0)
 }
 
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
@@ -602,11 +624,39 @@ mod tests {
     }
 
     #[test]
-    fn noise_bars_are_coloured_by_height() {
-        let theme = Theme::VAPORWAVE;
-        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR), theme.graph_low);
-        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR + NOISE_BAR_SCALE / 2), theme.graph_mid);
-        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR + NOISE_BAR_SCALE), theme.graph_high);
+    fn signal_quality_spans_poor_to_good() {
+        assert_eq!(rssi_quality(-120), 0.0);
+        assert_eq!(rssi_quality(-90), 0.5);
+        assert_eq!(rssi_quality(-27), 1.0);
+        assert_eq!(snr_quality(-12.0), 0.0);
+        assert_eq!(snr_quality(0.0), 0.5);
+        assert_eq!(snr_quality(10.0), 1.0);
+    }
+
+    #[test]
+    fn a_lower_noise_floor_is_better() {
+        assert_eq!(noise_quality(-80), 0.0);
+        assert_eq!(noise_quality(-105), 0.5);
+        assert_eq!(noise_quality(-120), 1.0);
+    }
+
+    #[test]
+    fn radio_values_are_coloured_by_quality() {
+        let mut app = app_with_noise(&[Some(-120), Some(-90)]);
+        app.theme = Theme::VAPORWAVE;
+        let backend = render_panel(50, 7, |f, area| draw_radio(f, &app, area));
+        let buffer = backend.buffer();
+        let colour_of = |row: u16, text: &str| {
+            let line: String = (0..50).map(|x| buffer[(x, row)].symbol().to_string()).collect();
+            let x = line.find(text).unwrap_or_else(|| panic!("{text} not on row {row}: {line}"));
+            buffer[(line[..x].chars().count() as u16, row)].fg
+        };
+        // Current noise -90 dBm is poor; the test RSSI of -90 dBm is fair
+        assert_eq!(colour_of(1, "-90 dBm"), app.theme.quality_poor);
+        assert_eq!(colour_of(5, "-90 dBm"), app.theme.quality_fair);
+        // Bars, newest rightmost: -90 is poor, -120 is good
+        assert_eq!(buffer[(48, 4)].fg, app.theme.quality_poor);
+        assert_eq!(buffer[(47, 4)].fg, app.theme.quality_good);
     }
 
     #[test]
