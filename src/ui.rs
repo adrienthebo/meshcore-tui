@@ -344,7 +344,7 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(sparkline, rows[1]);
 
     let footer = format!(
-        "Last RX {} dBm / {:.2} dB   Air TX {}s RX {}s",
+        "RSSI {} dBm  SNR {:.2} dB   Air TX {}s RX {}s",
         latest.last_rssi, latest.last_snr, latest.tx_air_secs, latest.rx_air_secs
     );
     f.render_widget(Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)), rows[2]);
