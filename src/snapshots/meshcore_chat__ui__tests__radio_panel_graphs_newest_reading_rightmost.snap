@@ -1,0 +1,11 @@
+---
+source: src/ui.rs
+expression: "render_panel(50, 7, |f, area| draw_radio(f, &app, area))"
+---
+"┌ Radio ─────────────────────────────────────────┐"
+"│Noise -80 dBm  (min -120 / max -80)             │"
+"│                                              ▂█│"
+"│                                            ▄ ██│"
+"│                                          ▁▇█ ██│"
+"│Last RX -90 dBm / 5.25 dB   Air TX 12s RX 340s  │"
+"└────────────────────────────────────────────────┘"

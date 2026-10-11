@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -23,9 +23,15 @@ pub fn draw(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
+    let diagnostics = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(40), Constraint::Length(50)])
+        .split(chunks[2]);
+
     draw_status(f, app, chunks[0]);
     draw_main(f, app, chunks[1]);
-    draw_packets(f, app, chunks[2]);
+    draw_packets(f, app, diagnostics[0]);
+    draw_radio(f, app, diagnostics[1]);
     draw_input(f, app, chunks[3]);
 }
 
@@ -289,6 +295,61 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(w, area);
 }
 
+/// Noise floor range the graph spans; the firmware never reports below -120 dBm
+const NOISE_GRAPH_MIN_DBM: i16 = -120;
+const NOISE_GRAPH_MAX_DBM: i16 = -80;
+
+/// Bar height for a noise floor reading, offset so a reading at the graph's floor
+/// still draws the smallest bar in a 3-row graph and stays distinct from a gap
+fn noise_bar(dbm: i16) -> u64 {
+    (dbm.clamp(NOISE_GRAPH_MIN_DBM, NOISE_GRAPH_MAX_DBM) - NOISE_GRAPH_MIN_DBM + 3) as u64
+}
+
+fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Radio ")
+        .border_style(Style::default().fg(Color::Magenta));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let stats = &app.radio_stats;
+    let Some(latest) = stats.latest else {
+        let waiting = Paragraph::new("waiting for radio stats…").style(Style::default().fg(Color::DarkGray));
+        f.render_widget(waiting, inner);
+        return;
+    };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    // Newest first, drawn from the right edge, so the latest reading is rightmost
+    let visible: Vec<Option<i16>> = stats.noise_history.iter().rev().take(inner.width as usize).copied().collect();
+    let readings = visible.iter().flatten();
+    let range = match (readings.clone().min(), readings.max()) {
+        (Some(min), Some(max)) => format!("  (min {} / max {})", min, max),
+        _ => String::new(),
+    };
+    let header = format!("Noise {} dBm{}", latest.noise_floor, range);
+    f.render_widget(Paragraph::new(header).style(Style::default().fg(Color::White)), rows[0]);
+
+    let bars: Vec<SparklineBar> = visible.iter().map(|r| SparklineBar::from(r.map(noise_bar))).collect();
+    let sparkline = Sparkline::default()
+        .data(bars)
+        .max(noise_bar(NOISE_GRAPH_MAX_DBM))
+        .direction(RenderDirection::RightToLeft)
+        .style(Style::default().fg(Color::Green));
+    f.render_widget(sparkline, rows[1]);
+
+    let footer = format!(
+        "Last RX {} dBm / {:.2} dB   Air TX {}s RX {}s",
+        latest.last_rssi, latest.last_snr, latest.tx_air_secs, latest.rx_air_secs
+    );
+    f.render_widget(Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)), rows[2]);
+}
+
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let w = Paragraph::new(app.input.as_str())
         .style(Style::default().fg(Color::White))
@@ -486,5 +547,45 @@ mod tests {
             app.input.insert(c);
         }
         insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, area)));
+    }
+
+    // ── Radio panel ──────────────────────────────────────────────────────────
+
+    fn app_with_noise(readings: &[Option<i16>]) -> App {
+        let mut app = App::new(0);
+        for reading in readings {
+            let result = reading.map(radio_stats).ok_or_else(|| "timeout".to_string());
+            app.radio_stats.record(result);
+        }
+        app
+    }
+
+    #[test]
+    fn radio_waits_for_the_first_reading() {
+        let app = app_with_noise(&[None]);
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, area)));
+        assert!(rows[1].contains("waiting for radio stats…"));
+    }
+
+    #[test]
+    fn noise_bars_clamp_to_the_graph_range() {
+        assert_eq!(noise_bar(-130), 3);
+        assert_eq!(noise_bar(NOISE_GRAPH_MIN_DBM), 3);
+        assert_eq!(noise_bar(-100), 23);
+        assert_eq!(noise_bar(NOISE_GRAPH_MAX_DBM), 43);
+        assert_eq!(noise_bar(-60), 43);
+    }
+
+    #[test]
+    fn radio_header_shows_range_of_visible_readings() {
+        let app = app_with_noise(&[Some(-90), Some(-118), None, Some(-104)]);
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, area)));
+        assert!(rows[1].contains("Noise -104 dBm  (min -118 / max -90)"));
+    }
+
+    #[test]
+    fn radio_panel_graphs_newest_reading_rightmost() {
+        let app = app_with_noise(&[Some(-120), Some(-110), Some(-100), None, Some(-90), Some(-80)]);
+        insta::assert_snapshot!(render_panel(50, 7, |f, area| draw_radio(f, &app, area)));
     }
 }
