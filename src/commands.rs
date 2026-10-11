@@ -320,15 +320,8 @@ impl App {
                 self.channels.insert(idx, ChannelEntry { name, secret });
             }
             Outcome::ChannelInfo { idx, info } => {
-                let name = sanitize(&info.name);
+                let name = self.store_channel(idx, &info).unwrap_or_default();
                 let secret_hex = meshcore_rs::parsing::hex_encode(&info.secret);
-                if !name.is_empty() {
-                    self.channels.insert(idx, ChannelEntry {
-                        name: name.clone(),
-                        secret: info.secret,
-                    });
-                    self.fw_channel_map.insert(info.channel_idx, idx);
-                }
                 self.sys(&format!(
                     "Channel #{} (fw#{}): name='{}' secret={}",
                     idx, info.channel_idx, name, secret_hex

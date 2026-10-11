@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use chrono::Local;
 use meshcore_rs::events::{
-    AdvertisementData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
+    AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
     PathUpdateData, SelfInfo,
 };
 
@@ -278,6 +278,21 @@ impl App {
             .unwrap_or_else(|| self.channel_label(self.active_channel))
     }
 
+    /// Record a channel read from the radio at local index `idx`; returns its name,
+    /// or None for an unnamed (unconfigured) slot, which is not stored
+    pub fn store_channel(&mut self, idx: u8, info: &ChannelInfoData) -> Option<String> {
+        let name = sanitize(&info.name);
+        if name.is_empty() {
+            return None;
+        }
+        self.channels.insert(idx, ChannelEntry {
+            name: name.clone(),
+            secret: info.secret,
+        });
+        self.fw_channel_map.insert(info.channel_idx, idx);
+        Some(name)
+    }
+
     pub fn channel_label(&self, ch: u8) -> String {
         // Direct lookup by local index
         if let Some(entry) = self.channels.get(&ch) {
@@ -518,6 +533,24 @@ mod tests {
         assert_eq!(app.channel_label(2), "CH#2");
         app.fw_channel_map.insert(5, 2);
         assert_eq!(app.channel_label(5), "CH#5");
+    }
+
+    #[test]
+    fn store_channel_records_sanitized_name_and_firmware_index() {
+        let mut app = App::new(0);
+        let info = ChannelInfoData { channel_idx: 5, name: "Ops\u{0}".to_string(), secret: [7; 16] };
+        assert_eq!(app.store_channel(1, &info), Some("Ops".to_string()));
+        assert_eq!(app.channels[&1].secret, [7; 16]);
+        assert_eq!(app.channel_label(5), "Ops");
+    }
+
+    #[test]
+    fn store_channel_skips_unnamed_slots() {
+        let mut app = App::new(0);
+        let info = ChannelInfoData { channel_idx: 5, name: "\u{0}".to_string(), secret: [7; 16] };
+        assert_eq!(app.store_channel(1, &info), None);
+        assert!(app.channels.is_empty());
+        assert!(app.fw_channel_map.is_empty());
     }
 
     #[test]

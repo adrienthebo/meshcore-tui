@@ -6,7 +6,7 @@ use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::app::{App, ChannelEntry};
+use crate::app::App;
 use crate::commands::{run_radio_command, Outcome};
 use crate::update::{Effect, Recipient};
 use crate::text::sanitize;
@@ -129,27 +129,15 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
 
     // Load channels sequentially
     {
-        let mut loaded = 0u8;
         let mut names = Vec::new();
         for idx in 0..16u8 {
             match mc.commands().lock().await.get_channel(idx).await {
-                Ok(info) => {
-                    let name = sanitize(&info.name);
-                    if !name.is_empty() {
-                        app.channels.insert(idx, ChannelEntry {
-                            name: name.clone(),
-                            secret: info.secret,
-                        });
-                        app.fw_channel_map.insert(info.channel_idx, idx);
-                        names.push(name);
-                        loaded += 1;
-                    }
-                }
+                Ok(info) => names.extend(app.store_channel(idx, &info)),
                 Err(_) => continue,
             }
         }
-        if loaded > 0 {
-            app.sys(&format!("Loaded {} channels: {}", loaded, names.join(", ")));
+        if !names.is_empty() {
+            app.sys(&format!("Loaded {} channels: {}", names.len(), names.join(", ")));
         }
     }
 
