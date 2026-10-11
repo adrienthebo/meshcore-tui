@@ -1,11 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::Mutex;
 
 use crate::app::{App, ChannelEntry};
 use crate::text::sanitize;
@@ -13,24 +11,24 @@ use crate::Args;
 
 // ── MeshCore Integration ─────────────────────────────────────────────────────
 
-pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
+pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
     let mc = if let Some(ref tcp_addr) = args.tcp {
         let parts: Vec<&str> = tcp_addr.split(':').collect();
         let host = parts[0];
         let port: u16 = parts.get(1).unwrap_or(&"4403").parse().unwrap_or(4403);
-        app.lock().await.sys(&format!("Connecting TCP {}:{}...", host, port));
+        app.sys(&format!("Connecting TCP {}:{}...", host, port));
         match MeshCore::tcp(host, port).await {
             Ok(mc) => mc,
             Err(e) => {
-                app.lock().await.err(&format!("TCP connect failed: {}", e));
+                app.err(&format!("TCP connect failed: {}", e));
                 return None;
             }
         }
     } else if args.ble.is_some() {
         let device_name = args.ble.as_ref().unwrap().as_deref();
         match device_name {
-            Some(name) => app.lock().await.sys(&format!("Scanning BLE for '{}'...", name)),
-            None => app.lock().await.sys("Scanning for any MeshCore BLE device..."),
+            Some(name) => app.sys(&format!("Scanning BLE for '{}'...", name)),
+            None => app.sys("Scanning for any MeshCore BLE device..."),
         }
         let name = match device_name {
             Some(name) => Ok(name.to_string()),
@@ -50,22 +48,18 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
         match connected {
             Ok(mc) => mc,
             Err(e) => {
-                app.lock().await.err(&format!("BLE connect failed: {}", e));
+                app.err(&format!("BLE connect failed: {}", e));
                 return None;
             }
         }
     } else {
         let port = args.port.as_deref().unwrap_or("/dev/ttyACM0");
-        app.lock().await.port_info = port.to_string();
-        app.lock()
-            .await
-            .sys(&format!("Connecting serial {} @ {}...", port, args.baud));
+        app.port_info = port.to_string();
+        app.sys(&format!("Connecting serial {} @ {}...", port, args.baud));
         match MeshCore::serial(port, args.baud).await {
             Ok(mc) => mc,
             Err(e) => {
-                app.lock()
-                    .await
-                    .err(&format!("Serial connect failed: {}", e));
+                app.err(&format!("Serial connect failed: {}", e));
                 return None;
             }
         }
@@ -74,26 +68,25 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
     // AppStart → get SelfInfo
     match mc.commands().lock().await.send_appstart().await {
         Ok(info) => {
-            let mut a = app.lock().await;
-            a.sys(&format!("Connected: {} (freq: {} MHz, SF{}, CR{}, BW {} kHz)",
+            app.sys(&format!("Connected: {} (freq: {} MHz, SF{}, CR{}, BW {} kHz)",
                 sanitize(&info.name),
                 info.radio_freq as f64 / 1_000.0,
                 info.sf,
                 info.cr,
                 info.radio_bw as f64 / 1_000.0,
             ));
-            a.connected = true;
-            if a.port_info.is_empty() {
-                a.port_info = if args.ble.is_some() {
+            app.connected = true;
+            if app.port_info.is_empty() {
+                app.port_info = if args.ble.is_some() {
                     format!("BLE: {}", sanitize(&info.name))
                 } else {
                     "TCP".into()
                 };
             }
-            a.self_info = Some(info);
+            app.self_info = Some(info);
         }
         Err(e) => {
-            app.lock().await.err(&format!("AppStart failed: {}", e));
+            app.err(&format!("AppStart failed: {}", e));
             return None;
         }
     }
@@ -105,17 +98,14 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
             .unwrap()
             .as_secs() as u32;
         if let Err(e) = mc.commands().lock().await.set_time(ts).await {
-            app.lock()
-                .await
-                .sys(&format!("Time sync warning: {}", e));
+            app.sys(&format!("Time sync warning: {}", e));
         }
     }
 
     // Battery
     if let Ok(bat) = mc.commands().lock().await.get_bat().await {
-        let mut a = app.lock().await;
-        a.battery_level = Some(bat.battery_mv);
-        a.sys(&format!("Battery: {:.3}V", bat.battery_mv as f64 / 1000.0));
+        app.battery_level = Some(bat.battery_mv);
+        app.sys(&format!("Battery: {:.3}V", bat.battery_mv as f64 / 1000.0));
     }
 
     // Contacts (BLE needs longer timeout)
@@ -126,14 +116,11 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
     };
     match mc.commands().lock().await.get_contacts_with_timeout(0, contacts_timeout).await {
         Ok(contacts) => {
-            let mut a = app.lock().await;
-            a.sys(&format!("Loaded {} contacts", contacts.len()));
-            a.contacts = contacts;
+            app.sys(&format!("Loaded {} contacts", contacts.len()));
+            app.contacts = contacts;
         }
         Err(e) => {
-            app.lock()
-                .await
-                .err(&format!("Failed to load contacts: {}", e));
+            app.err(&format!("Failed to load contacts: {}", e));
         }
     }
 
@@ -146,14 +133,12 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
                 Ok(info) => {
                     let name = sanitize(&info.name);
                     if !name.is_empty() {
-                        let mut a = app.lock().await;
-                        a.channels.insert(idx, ChannelEntry {
+                        app.channels.insert(idx, ChannelEntry {
                             name: name.clone(),
                             secret: info.secret,
                         });
-                        a.fw_channel_map.insert(info.channel_idx, idx);
+                        app.fw_channel_map.insert(info.channel_idx, idx);
                         names.push(name);
-                        drop(a);
                         loaded += 1;
                     }
                 }
@@ -161,7 +146,7 @@ pub async fn connect(app: &Arc<Mutex<App>>, args: &Args) -> Option<MeshCore> {
             }
         }
         if loaded > 0 {
-            app.lock().await.sys(&format!("Loaded {} channels: {}", loaded, names.join(", ")));
+            app.sys(&format!("Loaded {} channels: {}", loaded, names.join(", ")));
         }
     }
 
@@ -201,20 +186,15 @@ pub fn apply_queued_events(app: &mut App, events: &mut UnboundedReceiver<EventPa
     message_arrived
 }
 
-pub async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
-    let (contact, channel) = {
-        let a = app.lock().await;
-        (
-            a.selected_contact.and_then(|idx| a.contacts.get(idx).cloned()),
-            a.active_channel,
-        )
-    };
+pub async fn send_message(mc: &MeshCore, app: &mut App, text: &str) {
+    let contact = app.selected_contact.and_then(|idx| app.contacts.get(idx).cloned());
+    let channel = app.active_channel;
 
     if let Some(contact) = contact {
         // Direct message to selected contact
         match mc.commands().lock().await.send_msg(&contact, text, None).await {
-            Ok(info) => app.lock().await.on_direct_sent(&contact, text, &info),
-            Err(e) => app.lock().await.err(&format!("Send failed: {}", e)),
+            Ok(info) => app.on_direct_sent(&contact, text, &info),
+            Err(e) => app.err(&format!("Send failed: {}", e)),
         }
     } else {
         // Channel message
@@ -225,8 +205,8 @@ pub async fn send_message(mc: &MeshCore, app: &Arc<Mutex<App>>, text: &str) {
             .send_channel_msg(channel, text, None)
             .await
         {
-            Ok(_) => app.lock().await.on_channel_sent(channel, text),
-            Err(e) => app.lock().await.err(&format!("Channel send failed: {}", e)),
+            Ok(_) => app.on_channel_sent(channel, text),
+            Err(e) => app.err(&format!("Channel send failed: {}", e)),
         }
     }
 }

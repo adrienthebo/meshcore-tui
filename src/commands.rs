@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use meshcore_rs::MeshCore;
-use tokio::sync::Mutex;
 
 use crate::app::{App, ChannelEntry};
 use crate::text::sanitize;
@@ -238,81 +235,77 @@ async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]
     Ok(secret)
 }
 
-pub async fn handle_command(input: &str, app: &Arc<Mutex<App>>, mc: Option<&MeshCore>) {
+pub async fn handle_command(input: &str, app: &mut App, mc: Option<&MeshCore>) {
     let cmd = match parse_command(input) {
         Ok(cmd) => cmd,
         Err(e) => {
-            app.lock().await.err(&e);
+            app.err(&e);
             return;
         }
     };
-    let Some(cmd) = app.lock().await.apply_local(cmd) else {
+    let Some(cmd) = app.apply_local(cmd) else {
         return;
     };
     let Some(mc) = mc else {
-        app.lock().await.err("Not connected");
+        app.err("Not connected");
         return;
     };
 
     match cmd {
         Command::Contacts => match mc.commands().lock().await.get_contacts(0).await {
             Ok(c) => {
-                let mut a = app.lock().await;
-                a.sys(&format!("Loaded {} contacts", c.len()));
-                a.contacts = c;
+                app.sys(&format!("Loaded {} contacts", c.len()));
+                app.contacts = c;
             }
-            Err(e) => app.lock().await.err(&format!("Contacts: {}", e)),
+            Err(e) => app.err(&format!("Contacts: {}", e)),
         },
         Command::Advert => match mc.commands().lock().await.send_advert(true).await {
-            Ok(_) => app.lock().await.sys("Advertisement sent"),
-            Err(e) => app.lock().await.err(&format!("Advert: {}", e)),
+            Ok(_) => app.sys("Advertisement sent"),
+            Err(e) => app.err(&format!("Advert: {}", e)),
         },
         Command::Battery => match mc.commands().lock().await.get_bat().await {
             Ok(b) => {
-                let mut a = app.lock().await;
-                a.battery_level = Some(b.battery_mv);
+                app.battery_level = Some(b.battery_mv);
                 let storage = match (b.used_kb, b.total_kb) {
                     (Some(used), Some(total)) => format!("{}/{} KB", used, total),
                     _ => "N/A".to_string(),
                 };
-                a.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
+                app.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
             }
-            Err(e) => app.lock().await.err(&format!("Battery: {}", e)),
+            Err(e) => app.err(&format!("Battery: {}", e)),
         },
         Command::Name(name) => match mc.commands().lock().await.set_name(&name).await {
-            Ok(_) => app.lock().await.sys(&format!("Name set to: {}", name)),
-            Err(e) => app.lock().await.err(&format!("Set name: {}", e)),
+            Ok(_) => app.sys(&format!("Name set to: {}", name)),
+            Err(e) => app.err(&format!("Set name: {}", e)),
         },
         Command::SetChannel { idx, name, secret } => match set_channel(mc, idx, &name, secret).await {
             Ok(secret) => {
                 let secret_hex = meshcore_rs::parsing::hex_encode(&secret);
-                let mut a = app.lock().await;
-                a.sys(&format!(
+                app.sys(&format!(
                     "Channel #{} set: name='{}' secret={}",
                     idx, name, secret_hex
                 ));
-                a.channels.insert(idx, ChannelEntry { name, secret });
+                app.channels.insert(idx, ChannelEntry { name, secret });
             }
-            Err(e) => app.lock().await.err(&e),
+            Err(e) => app.err(&e),
         },
         Command::GetChannel(idx) => match mc.commands().lock().await.get_channel(idx).await {
             Ok(info) => {
                 let name = sanitize(&info.name);
                 let secret_hex = meshcore_rs::parsing::hex_encode(&info.secret);
-                let mut a = app.lock().await;
                 if !name.is_empty() {
-                    a.channels.insert(idx, ChannelEntry {
+                    app.channels.insert(idx, ChannelEntry {
                         name: name.clone(),
                         secret: info.secret,
                     });
-                    a.fw_channel_map.insert(info.channel_idx, idx);
+                    app.fw_channel_map.insert(info.channel_idx, idx);
                 }
-                a.sys(&format!(
+                app.sys(&format!(
                     "Channel #{} (fw#{}): name='{}' secret={}",
                     idx, info.channel_idx, name, secret_hex
                 ));
             }
-            Err(e) => app.lock().await.err(&format!("Get channel: {}", e)),
+            Err(e) => app.err(&format!("Get channel: {}", e)),
         },
         // apply_local handles every command that doesn't need the radio
         _ => {}

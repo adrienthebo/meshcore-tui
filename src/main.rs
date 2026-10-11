@@ -8,7 +8,6 @@ mod text;
 mod ui;
 
 use std::io;
-use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -18,7 +17,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
 use app::App;
 use commands::handle_command;
@@ -81,53 +80,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = Arc::new(Mutex::new(App::new(args.channel)));
+    let mut app = App::new(args.channel);
+    app.sys("MeshCore Chat — Rust TUI Client v0.1");
+    app.sys("Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
 
-    {
-        let mut a = app.lock().await;
-        a.sys("MeshCore Chat — Rust TUI Client v0.1");
-        a.sys("Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
-    }
-
-    let mc = connect(&app, &args).await;
+    let mc = connect(&mut app, &args).await;
     let (radio_events_tx, mut radio_events) = mpsc::unbounded_channel();
 
     if let Some(ref mc) = mc {
-        app.lock().await.sys("Ready! Type a message and press Enter.");
+        app.sys("Ready! Type a message and press Enter.");
         setup_subscriptions(mc, radio_events_tx).await;
     } else {
-        app.lock()
-            .await
-            .sys("Offline mode — fix connection and restart.");
+        app.sys("Offline mode — fix connection and restart.");
     }
 
     // Main loop
     loop {
-        if apply_queued_events(&mut *app.lock().await, &mut radio_events) {
+        if apply_queued_events(&mut app, &mut radio_events) {
             bell();
         }
 
-        {
-            let a = app.lock().await;
-            terminal.draw(|f| draw(f, &*a))?;
-        }
+        terminal.draw(|f| draw(f, &app))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let CEvent::Key(key) = event::read()? {
-                let submitted = app.lock().await.handle_key(key);
-                if let Some(text) = submitted {
+                if let Some(text) = app.handle_key(key) {
                     if text.starts_with('/') {
-                        handle_command(&text, &app, mc.as_ref()).await;
+                        handle_command(&text, &mut app, mc.as_ref()).await;
                     } else if let Some(ref mc) = mc {
-                        send_message(mc, &app, &text).await;
+                        send_message(mc, &mut app, &text).await;
                     } else {
-                        app.lock().await.err("Not connected");
+                        app.err("Not connected");
                     }
                 }
             }
         }
 
-        if app.lock().await.should_quit {
+        if app.should_quit {
             break;
         }
     }
