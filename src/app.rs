@@ -344,9 +344,13 @@ mod tests {
         assert!(app.apply_radio_event(EventPayload::ChannelMessage(channel_message(0, "Bob: hi"))));
         assert!(!app.apply_radio_event(EventPayload::Ack { tag: [0; 4] }));
         assert!(!app.apply_radio_event(EventPayload::Contact(contact("Alice", [2; 6]))));
+        let adv = AdvertisementData { prefix: [3; 6], name: String::new(), lat: 0, lon: 0 };
+        assert!(!app.apply_radio_event(EventPayload::Advertisement(adv)));
+        let path = PathUpdateData { prefix: [2; 6], path_len: 1, path: vec![] };
+        assert!(!app.apply_radio_event(EventPayload::PathUpdate(path)));
         assert!(!app.apply_radio_event(EventPayload::Time(0)));
         assert_eq!(app.messages.len(), 2);
-        assert_eq!(app.packets.len(), 2);
+        assert_eq!(app.packets.len(), 4);
         assert_eq!(app.contacts.len(), 1);
     }
 
@@ -512,6 +516,8 @@ mod tests {
         let mut app = App::new(0);
         app.channels.insert(2, channel(""));
         assert_eq!(app.channel_label(2), "CH#2");
+        app.fw_channel_map.insert(5, 2);
+        assert_eq!(app.channel_label(5), "CH#5");
     }
 
     #[test]
