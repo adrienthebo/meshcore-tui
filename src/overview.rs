@@ -41,7 +41,7 @@ impl View for Overview {
     /// The panel with focus gets keys first; Overview takes the ones it ignores:
     /// Tab moves focus between panels and F1 deselects
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
-        let result = self.focused_panel().handle_key(key, app);
+        let result = self.focused_panel_mut().handle_key(key, app);
         if result != KeyResult::Ignored {
             return result;
         }
@@ -59,10 +59,25 @@ impl View for Overview {
             _ => KeyResult::Ignored,
         }
     }
+
+    fn key_hints(&self) -> Vec<&'static str> {
+        let mut hints = self.focused_panel().key_hints();
+        hints.extend(["Tab=panel", "F1=deselect"]);
+        hints
+    }
 }
 
 impl Overview {
-    fn focused_panel(&mut self) -> &mut dyn View {
+    fn focused_panel(&self) -> &dyn View {
+        match self.focus {
+            Panel::Input => &self.input,
+            Panel::Messages => &self.messages,
+            Panel::Contacts => &self.contacts,
+            Panel::Packets => &self.packets,
+        }
+    }
+
+    fn focused_panel_mut(&mut self) -> &mut dyn View {
         match self.focus {
             Panel::Input => &mut self.input,
             Panel::Messages => &mut self.messages,
@@ -116,6 +131,10 @@ impl View for ContactList {
             }
             _ => KeyResult::Ignored,
         }
+    }
+
+    fn key_hints(&self) -> Vec<&'static str> {
+        vec!["↑↓=contact"]
     }
 }
 
@@ -213,6 +232,16 @@ mod tests {
         assert_eq!(press(&mut overview, &app, KeyCode::Down), KeyResult::Ignored);
         overview.focus = Panel::Contacts;
         assert_eq!(press(&mut overview, &app, KeyCode::Down), KeyResult::Action(Action::SelectContact(0)));
+    }
+
+    #[test]
+    fn key_hints_follow_focus() {
+        let mut overview = Overview::default();
+        assert_eq!(overview.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect"]);
+        overview.focus = Panel::Contacts;
+        assert_eq!(overview.key_hints(), ["↑↓=contact", "Tab=panel", "F1=deselect"]);
+        overview.focus = Panel::Packets;
+        assert_eq!(overview.key_hints(), ["Tab=panel", "F1=deselect"]);
     }
 
     #[test]

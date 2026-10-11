@@ -13,6 +13,10 @@ pub trait View {
     /// Draw into `area`; `focused` views get keys first and show it, e.g. in their border
     fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool);
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult;
+    /// The keys this view uses right now, e.g. "Enter=send"
+    fn key_hints(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// What a view did with a key
@@ -64,6 +68,16 @@ impl Ui {
                 KeyResult::Handled | KeyResult::Ignored => None,
             },
         }
+    }
+
+    /// The keys that work right now: the tab's, then the ones every tab shares
+    pub fn key_hints(&self) -> Vec<&'static str> {
+        let mut hints = self.active_tab().key_hints();
+        if self.tabs.len() > 1 {
+            hints.push("Alt+N=tab");
+        }
+        hints.push("Esc=quit");
+        hints
     }
 
     /// Index of the tab Alt+`digit` shows: '1' is the first in the tab bar
@@ -133,6 +147,15 @@ mod tests {
             assert_eq!(ui.handle_key(key(KeyCode::Char(digit), KeyModifiers::ALT), &app), None);
             assert_eq!(ui.active, 0);
         }
+    }
+
+    #[test]
+    fn key_hints_add_the_shared_keys_to_the_tabs() {
+        let mut ui = test_ui();
+        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect", "Esc=quit"]);
+        ui.tabs.push(Box::new(Probe));
+        ui.active = 1;
+        assert_eq!(ui.key_hints(), ["Alt+N=tab", "Esc=quit"]);
     }
 
     #[test]

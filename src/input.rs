@@ -103,6 +103,10 @@ impl View for InputLine {
         }
         KeyResult::Handled
     }
+
+    fn key_hints(&self) -> Vec<&'static str> {
+        vec!["Enter=send"]
+    }
 }
 
 #[cfg(test)]

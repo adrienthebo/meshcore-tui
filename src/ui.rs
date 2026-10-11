@@ -33,13 +33,20 @@ pub fn draw(f: &mut Frame, app: &App, ui: &Ui) {
     ui.active_tab().draw(f, chunks[2], app, &ui.theme, true);
 }
 
-/// Each tab's title, numbered with the digit that shows it alongside Alt
+/// Each tab's title, numbered with the digit that shows it alongside Alt, and the
+/// keys that work right now at the right end of the rule
 fn draw_tab_bar(f: &mut Frame, ui: &Ui, area: Rect) {
     let titles: Vec<&str> = ui.tabs.iter().map(|tab| tab.title()).collect();
     let bar = TabBar::new(&titles, ui.active)
         .active_style(Style::default().fg(ui.theme.focus))
         .rule_style(Style::default().fg(ui.theme.muted));
     f.render_widget(bar, area);
+
+    let hints = format!(" {} ", ui.key_hints().join("  "));
+    let rule = Rect { y: area.y + 1, height: 1, ..area };
+    // Style the span, not the line: a line's style covers the whole row and would recolour the rule
+    let hints = Line::from(Span::styled(hints, Style::default().fg(ui.theme.text))).right_aligned();
+    f.render_widget(hints, rule);
 }
 
 /// Lay out the Overview's panels and draw each, highlighting the one with focus
@@ -412,10 +419,7 @@ fn noise_quality(dbm: i16) -> f32 {
 
 /// The input line, with the terminal cursor in it while it has focus
 pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, focused: bool, area: Rect) {
-    let title = format!(
-        " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
-        app.target_label()
-    );
+    let title = format!(" Send to: {} ", app.target_label());
     let border = if focused { theme.focus } else { theme.input_border };
     let w = Paragraph::new(input.as_str())
         .style(Style::default().fg(theme.text))
@@ -700,12 +704,14 @@ mod tests {
         });
         let backend = render_panel(80, 24, |f, _| draw(f, &app, &ui));
         let buffer = backend.buffer();
-        // Status border, the current tab's outline over the muted rule, then the
-        // focused contacts border and the unfocused messages border
+        // Status border, the current tab's outline over the muted rule and the key
+        // hints at its end, then the focused contacts border and the unfocused
+        // messages border
         assert_eq!(buffer[(0, 0)].fg, ui.theme.status_border);
         assert_eq!(buffer[(1, 3)].fg, ui.theme.focus);
         assert_eq!(buffer[(1, 4)].fg, ui.theme.focus);
-        assert_eq!(buffer[(79, 4)].fg, ui.theme.muted);
+        assert_eq!(buffer[(20, 4)].fg, ui.theme.muted);
+        assert_eq!(buffer[(78, 4)].fg, ui.theme.text);
         assert_eq!(buffer[(79, 5)].fg, ui.theme.focus);
         assert_eq!(buffer[(0, 5)].fg, ui.theme.messages_border);
     }

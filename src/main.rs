@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new(args.channel);
     let mut ui = Ui::new(args.theme.theme());
     app.sys("MeshCore Chat — Rust TUI Client v0.1");
-    app.sys("Alt+1=Overview  Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
+    app.sys("Keys for the focused panel are at the right of the tab bar  /help=commands");
 
     let mc = connect(&mut app, &args).await.map(Arc::new);
     let (radio_events_tx, mut radio_events) = mpsc::unbounded_channel();
