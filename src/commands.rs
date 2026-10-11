@@ -1,3 +1,4 @@
+use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo};
 use meshcore_rs::MeshCore;
 
 use crate::app::{App, ChannelEntry};
@@ -235,6 +236,109 @@ async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]
     Ok(secret)
 }
 
+/// What the radio returned for a command or sent message, for the app to apply
+#[derive(Debug)]
+pub enum Outcome {
+    Contacts(Vec<Contact>),
+    AdvertSent,
+    Battery(BatteryInfo),
+    NameSet(String),
+    ChannelSet {
+        idx: u8,
+        name: String,
+        secret: [u8; 16],
+    },
+    ChannelInfo {
+        idx: u8,
+        info: ChannelInfoData,
+    },
+    DirectSent {
+        contact: Contact,
+        text: String,
+        info: MsgSentInfo,
+    },
+    ChannelSent {
+        channel: u8,
+        text: String,
+    },
+}
+
+/// Run a command on the radio; the error is the text to show the user
+async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, String> {
+    match cmd {
+        Command::Contacts => mc.commands().lock().await.get_contacts(0).await
+            .map(Outcome::Contacts)
+            .map_err(|e| format!("Contacts: {}", e)),
+        Command::Advert => mc.commands().lock().await.send_advert(true).await
+            .map(|_| Outcome::AdvertSent)
+            .map_err(|e| format!("Advert: {}", e)),
+        Command::Battery => mc.commands().lock().await.get_bat().await
+            .map(Outcome::Battery)
+            .map_err(|e| format!("Battery: {}", e)),
+        Command::Name(name) => mc.commands().lock().await.set_name(&name).await
+            .map(|_| Outcome::NameSet(name))
+            .map_err(|e| format!("Set name: {}", e)),
+        Command::SetChannel { idx, name, secret } => set_channel(mc, idx, &name, secret).await
+            .map(|secret| Outcome::ChannelSet { idx, name, secret }),
+        Command::GetChannel(idx) => mc.commands().lock().await.get_channel(idx).await
+            .map(|info| Outcome::ChannelInfo { idx, info })
+            .map_err(|e| format!("Get channel: {}", e)),
+        // apply_local handles every command that doesn't need the radio
+        local => Err(format!("Not a radio command: {:?}", local)),
+    }
+}
+
+impl App {
+    /// Apply what the radio returned, or show its error
+    pub fn apply_outcome(&mut self, outcome: Result<Outcome, String>) {
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(e) => return self.err(&e),
+        };
+        match outcome {
+            Outcome::Contacts(contacts) => {
+                self.sys(&format!("Loaded {} contacts", contacts.len()));
+                self.contacts = contacts;
+            }
+            Outcome::AdvertSent => self.sys("Advertisement sent"),
+            Outcome::Battery(b) => {
+                self.battery_level = Some(b.battery_mv);
+                let storage = match (b.used_kb, b.total_kb) {
+                    (Some(used), Some(total)) => format!("{}/{} KB", used, total),
+                    _ => "N/A".to_string(),
+                };
+                self.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
+            }
+            Outcome::NameSet(name) => self.sys(&format!("Name set to: {}", name)),
+            Outcome::ChannelSet { idx, name, secret } => {
+                let secret_hex = meshcore_rs::parsing::hex_encode(&secret);
+                self.sys(&format!(
+                    "Channel #{} set: name='{}' secret={}",
+                    idx, name, secret_hex
+                ));
+                self.channels.insert(idx, ChannelEntry { name, secret });
+            }
+            Outcome::ChannelInfo { idx, info } => {
+                let name = sanitize(&info.name);
+                let secret_hex = meshcore_rs::parsing::hex_encode(&info.secret);
+                if !name.is_empty() {
+                    self.channels.insert(idx, ChannelEntry {
+                        name: name.clone(),
+                        secret: info.secret,
+                    });
+                    self.fw_channel_map.insert(info.channel_idx, idx);
+                }
+                self.sys(&format!(
+                    "Channel #{} (fw#{}): name='{}' secret={}",
+                    idx, info.channel_idx, name, secret_hex
+                ));
+            }
+            Outcome::DirectSent { contact, text, info } => self.on_direct_sent(&contact, &text, &info),
+            Outcome::ChannelSent { channel, text } => self.on_channel_sent(channel, &text),
+        }
+    }
+}
+
 pub async fn handle_command(input: &str, app: &mut App, mc: Option<&MeshCore>) {
     let cmd = match parse_command(input) {
         Ok(cmd) => cmd,
@@ -250,66 +354,8 @@ pub async fn handle_command(input: &str, app: &mut App, mc: Option<&MeshCore>) {
         app.err("Not connected");
         return;
     };
-
-    match cmd {
-        Command::Contacts => match mc.commands().lock().await.get_contacts(0).await {
-            Ok(c) => {
-                app.sys(&format!("Loaded {} contacts", c.len()));
-                app.contacts = c;
-            }
-            Err(e) => app.err(&format!("Contacts: {}", e)),
-        },
-        Command::Advert => match mc.commands().lock().await.send_advert(true).await {
-            Ok(_) => app.sys("Advertisement sent"),
-            Err(e) => app.err(&format!("Advert: {}", e)),
-        },
-        Command::Battery => match mc.commands().lock().await.get_bat().await {
-            Ok(b) => {
-                app.battery_level = Some(b.battery_mv);
-                let storage = match (b.used_kb, b.total_kb) {
-                    (Some(used), Some(total)) => format!("{}/{} KB", used, total),
-                    _ => "N/A".to_string(),
-                };
-                app.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
-            }
-            Err(e) => app.err(&format!("Battery: {}", e)),
-        },
-        Command::Name(name) => match mc.commands().lock().await.set_name(&name).await {
-            Ok(_) => app.sys(&format!("Name set to: {}", name)),
-            Err(e) => app.err(&format!("Set name: {}", e)),
-        },
-        Command::SetChannel { idx, name, secret } => match set_channel(mc, idx, &name, secret).await {
-            Ok(secret) => {
-                let secret_hex = meshcore_rs::parsing::hex_encode(&secret);
-                app.sys(&format!(
-                    "Channel #{} set: name='{}' secret={}",
-                    idx, name, secret_hex
-                ));
-                app.channels.insert(idx, ChannelEntry { name, secret });
-            }
-            Err(e) => app.err(&e),
-        },
-        Command::GetChannel(idx) => match mc.commands().lock().await.get_channel(idx).await {
-            Ok(info) => {
-                let name = sanitize(&info.name);
-                let secret_hex = meshcore_rs::parsing::hex_encode(&info.secret);
-                if !name.is_empty() {
-                    app.channels.insert(idx, ChannelEntry {
-                        name: name.clone(),
-                        secret: info.secret,
-                    });
-                    app.fw_channel_map.insert(info.channel_idx, idx);
-                }
-                app.sys(&format!(
-                    "Channel #{} (fw#{}): name='{}' secret={}",
-                    idx, info.channel_idx, name, secret_hex
-                ));
-            }
-            Err(e) => app.err(&format!("Get channel: {}", e)),
-        },
-        // apply_local handles every command that doesn't need the radio
-        _ => {}
-    }
+    let outcome = run_radio_command(mc, cmd).await;
+    app.apply_outcome(outcome);
 }
 
 #[cfg(test)]
@@ -553,5 +599,90 @@ mod tests {
             assert_eq!(format!("{:?}", returned), expected);
         }
         assert!(app.messages.is_empty());
+    }
+
+    // ── Radio outcomes ───────────────────────────────────────────────────────
+
+    fn channel_info(channel_idx: u8, name: &str) -> ChannelInfoData {
+        ChannelInfoData { channel_idx, name: name.to_string(), secret: [0xab; 16] }
+    }
+
+    #[test]
+    fn failed_outcome_shows_the_error() {
+        let mut app = App::new(0);
+        app.apply_outcome(Err("Battery: timeout".to_string()));
+        assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
+        assert_eq!(last_message(&app), "Battery: timeout");
+    }
+
+    #[test]
+    fn contacts_outcome_replaces_contacts() {
+        let mut app = app_with_contacts(3);
+        app.apply_outcome(Ok(Outcome::Contacts(vec![contact("Alice", [9; 6])])));
+        assert_eq!(app.contacts.len(), 1);
+        assert_eq!(last_message(&app), "Loaded 1 contacts");
+    }
+
+    #[test]
+    fn battery_outcome_records_level_and_storage() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo { battery_mv: 4012, used_kb: Some(5), total_kb: Some(110) })));
+        assert_eq!(app.battery_level, Some(4012));
+        assert_eq!(last_message(&app), "Battery: 4.012V  Storage: 5/110 KB");
+    }
+
+    #[test]
+    fn battery_outcome_without_storage() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo { battery_mv: 4012, used_kb: None, total_kb: Some(110) })));
+        assert_eq!(last_message(&app), "Battery: 4.012V  Storage: N/A");
+    }
+
+    #[test]
+    fn advert_and_name_outcomes_confirm() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::AdvertSent));
+        assert_eq!(last_message(&app), "Advertisement sent");
+        app.apply_outcome(Ok(Outcome::NameSet("Base".to_string())));
+        assert_eq!(last_message(&app), "Name set to: Base");
+    }
+
+    #[test]
+    fn channel_set_outcome_stores_channel_and_shows_secret() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::ChannelSet { idx: 1, name: "Ops".to_string(), secret: [0xab; 16] }));
+        assert_eq!(app.channels[&1].name, "Ops");
+        assert_eq!(app.channels[&1].secret, [0xab; 16]);
+        assert_eq!(last_message(&app), format!("Channel #1 set: name='Ops' secret={}", "ab".repeat(16)));
+    }
+
+    #[test]
+    fn channel_info_outcome_stores_named_channel() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::ChannelInfo { idx: 1, info: channel_info(5, "Ops") }));
+        assert_eq!(app.channels[&1].name, "Ops");
+        assert_eq!(app.fw_channel_map[&5], 1);
+        assert_eq!(last_message(&app), format!("Channel #1 (fw#5): name='Ops' secret={}", "ab".repeat(16)));
+    }
+
+    #[test]
+    fn channel_info_outcome_with_empty_name_is_not_stored() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::ChannelInfo { idx: 1, info: channel_info(5, "") }));
+        assert!(app.channels.is_empty());
+        assert!(app.fw_channel_map.is_empty());
+        assert!(last_message(&app).starts_with("Channel #1 (fw#5): name=''"));
+    }
+
+    #[test]
+    fn sent_outcomes_log_outgoing_messages() {
+        let mut app = App::new(0);
+        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
+        app.apply_outcome(Ok(Outcome::DirectSent { contact: contact("Alice", [1; 6]), text: "yo".to_string(), info }));
+        app.apply_outcome(Ok(Outcome::ChannelSent { channel: 0, text: "hey".to_string() }));
+        assert_eq!(app.tx_count, 2);
+        let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["yo", "hey"]);
+        assert_eq!(app.packets.last().unwrap().ptype, "SND");
     }
 }

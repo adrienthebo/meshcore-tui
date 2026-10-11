@@ -6,6 +6,7 @@ use meshcore_rs::{EventType, MeshCore};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::{App, ChannelEntry};
+use crate::commands::Outcome;
 use crate::text::sanitize;
 use crate::Args;
 
@@ -181,23 +182,16 @@ pub async fn send_message(mc: &MeshCore, app: &mut App, text: &str) {
     let contact = app.selected_contact.and_then(|idx| app.contacts.get(idx).cloned());
     let channel = app.active_channel;
 
-    if let Some(contact) = contact {
+    let outcome = if let Some(contact) = contact {
         // Direct message to selected contact
-        match mc.commands().lock().await.send_msg(&contact, text, None).await {
-            Ok(info) => app.on_direct_sent(&contact, text, &info),
-            Err(e) => app.err(&format!("Send failed: {}", e)),
-        }
+        mc.commands().lock().await.send_msg(&contact, text, None).await
+            .map(|info| Outcome::DirectSent { contact, text: text.to_string(), info })
+            .map_err(|e| format!("Send failed: {}", e))
     } else {
         // Channel message
-        match mc
-            .commands()
-            .lock()
-            .await
-            .send_channel_msg(channel, text, None)
-            .await
-        {
-            Ok(_) => app.on_channel_sent(channel, text),
-            Err(e) => app.err(&format!("Channel send failed: {}", e)),
-        }
-    }
+        mc.commands().lock().await.send_channel_msg(channel, text, None).await
+            .map(|_| Outcome::ChannelSent { channel, text: text.to_string() })
+            .map_err(|e| format!("Channel send failed: {}", e))
+    };
+    app.apply_outcome(outcome);
 }
