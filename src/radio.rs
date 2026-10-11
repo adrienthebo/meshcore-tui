@@ -120,7 +120,7 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
     match mc.commands().lock().await.get_contacts_with_timeout(0, contacts_timeout).await {
         Ok(contacts) => {
             app.sys(&format!("Loaded {} contacts", contacts.len()));
-            app.contacts = contacts;
+            app.set_contacts(contacts);
         }
         Err(e) => {
             app.err(&format!("Failed to load contacts: {}", e));

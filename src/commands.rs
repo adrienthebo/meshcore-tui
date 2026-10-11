@@ -184,7 +184,7 @@ impl App {
                     .position(|c| c.adv_name.to_lowercase().contains(&needle));
                 if let Some(idx) = found {
                     let contact_name = sanitize(&self.contacts[idx].adv_name);
-                    self.selected_contact = Some(idx);
+                    self.select_contact(idx);
                     self.sys(&format!("Now chatting with: {}", contact_name));
                 } else {
                     self.err(&format!("Contact '{}' not found", name));
@@ -217,7 +217,7 @@ impl App {
 
     fn switch_channel(&mut self, ch: u8) {
         self.active_channel = ch;
-        self.selected_contact = None;
+        self.selected_key = None;
         let label = self.channel_label(ch);
         self.sys(&format!("Switched to {}", label));
     }
@@ -299,7 +299,7 @@ impl App {
         match outcome {
             Outcome::Contacts(contacts) => {
                 self.sys(&format!("Loaded {} contacts", contacts.len()));
-                self.contacts = contacts;
+                self.set_contacts(contacts);
             }
             Outcome::AdvertSent => self.sys("Advertisement sent"),
             Outcome::Battery(b) => {
@@ -364,7 +364,7 @@ impl App {
 
     /// Where a message goes: the selected contact, else the active channel
     fn recipient(&self) -> Recipient {
-        match self.selected_contact.and_then(|idx| self.contacts.get(idx)) {
+        match self.selected_contact() {
             Some(contact) => Recipient::Contact(contact.clone()),
             None => Recipient::Channel(self.active_channel),
         }
@@ -508,11 +508,11 @@ mod tests {
     #[test]
     fn switch_channel_clears_contact_selection() {
         let mut app = app_with_contacts(1);
-        app.selected_contact = Some(0);
+        app.select_contact(0);
         app.channels.insert(2, channel("Ops"));
         app.apply_local(Command::SwitchChannel(2));
         assert_eq!(app.active_channel, 2);
-        assert_eq!(app.selected_contact, None);
+        assert_eq!(app.selected_key, None);
         assert_eq!(last_message(&app), "Switched to Ops");
     }
 
@@ -530,7 +530,7 @@ mod tests {
         app.contacts.push(contact("Alice", [1; 6]));
         app.contacts.push(contact("Bobby", [2; 6]));
         app.apply_local(Command::To("BOB".to_string()));
-        assert_eq!(app.selected_contact, Some(1));
+        assert_eq!(app.selected_index(), Some(1));
         assert_eq!(last_message(&app), "Now chatting with: Bobby");
     }
 
@@ -538,7 +538,7 @@ mod tests {
     fn to_unknown_contact_is_an_error() {
         let mut app = App::new(0);
         app.apply_local(Command::To("Zed".to_string()));
-        assert_eq!(app.selected_contact, None);
+        assert_eq!(app.selected_key, None);
         assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
         assert_eq!(last_message(&app), "Contact 'Zed' not found");
     }
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn submit_sends_text_to_the_selected_contact() {
         let mut app = connected_app();
-        app.selected_contact = Some(1);
+        app.select_contact(1);
         let effect = app.submit("hi");
         assert!(matches!(effect, Some(Effect::Send { to: Recipient::Contact(ref c), ref text })
             if c.adv_name == "c1" && text == "hi"));
@@ -689,6 +689,16 @@ mod tests {
         app.apply_outcome(Ok(Outcome::Contacts(vec![contact("Alice", [9; 6])])));
         assert_eq!(app.contacts.len(), 1);
         assert_eq!(last_message(&app), "Loaded 1 contacts");
+    }
+
+    #[test]
+    fn contacts_outcome_keeps_the_dm_target_when_the_order_changes() {
+        let mut app = connected_app();
+        app.select_contact(0);
+        let reordered = vec![app.contacts[1].clone(), app.contacts[0].clone()];
+        app.apply_outcome(Ok(Outcome::Contacts(reordered)));
+        assert!(matches!(app.submit("hi"), Some(Effect::Send { to: Recipient::Contact(ref c), .. })
+            if c.adv_name == "c0"));
     }
 
     #[test]

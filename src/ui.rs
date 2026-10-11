@@ -180,12 +180,13 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
     let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
+    let selected = app.selected_index();
     let citems: Vec<ListItem> = app
         .contacts
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let sel = app.selected_contact == Some(i);
+            let sel = selected == Some(i);
             let sty = if sel {
                 Style::default()
                     .fg(Color::Black)
@@ -452,7 +453,7 @@ mod tests {
     #[test]
     fn contacts_with_selection_and_truncation() {
         let mut app = connected_app();
-        app.selected_contact = Some(0);
+        app.select_contact(0);
         insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(f, &app, area)));
     }
 
@@ -480,7 +481,7 @@ mod tests {
     #[test]
     fn input_shows_text_and_send_target() {
         let mut app = connected_app();
-        app.selected_contact = Some(0);
+        app.select_contact(0);
         for c in "hello".chars() {
             app.input.insert(c);
         }

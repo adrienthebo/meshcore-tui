@@ -61,7 +61,8 @@ pub struct App {
     /// Maps firmware channel_idx → local channel index for received message lookup
     pub fw_channel_map: HashMap<u8, u8>,
     pub packets: Vec<PacketLogEntry>,
-    pub selected_contact: Option<usize>,
+    /// Public key of the contact messages go to; None sends to the active channel
+    pub selected_key: Option<[u8; 32]>,
     pub self_info: Option<SelfInfo>,
     pub battery_level: Option<u16>,
     pub active_channel: u8,
@@ -82,7 +83,7 @@ impl App {
             channels: HashMap::new(),
             fw_channel_map: HashMap::new(),
             packets: Vec::new(),
-            selected_contact: None,
+            selected_key: None,
             self_info: None,
             battery_level: None,
             active_channel: channel,
@@ -243,9 +244,36 @@ impl App {
             .unwrap_or_else(|| "Unknown".into())
     }
 
+    // ── Contact selection ────────────────────────────────────────────────────
+
+    /// The contact messages go to, if one is selected
+    pub fn selected_contact(&self) -> Option<&Contact> {
+        self.selected_index().map(|idx| &self.contacts[idx])
+    }
+
+    /// Position of the selected contact in the contact list
+    pub fn selected_index(&self) -> Option<usize> {
+        let key = self.selected_key?;
+        self.contacts.iter().position(|c| c.public_key == key)
+    }
+
+    /// Select the contact at `idx` in the contact list; out of range selects nothing
+    pub fn select_contact(&mut self, idx: usize) {
+        self.selected_key = self.contacts.get(idx).map(|c| c.public_key);
+    }
+
+    /// Replace the contact list, keeping the selection on the same contact
+    pub fn set_contacts(&mut self, contacts: Vec<Contact>) {
+        let selected_name = self.selected_contact().map(|c| sanitize(&c.adv_name));
+        self.contacts = contacts;
+        if let (Some(name), None) = (selected_name, self.selected_index()) {
+            self.selected_key = None;
+            self.err(&format!("Contact {} is no longer in the list; deselected", name));
+        }
+    }
+
     pub fn target_label(&self) -> String {
-        self.selected_contact
-            .and_then(|i| self.contacts.get(i))
+        self.selected_contact()
             .map(|c| sanitize(&c.adv_name))
             .unwrap_or_else(|| self.channel_label(self.active_channel))
     }
@@ -513,7 +541,7 @@ mod tests {
     fn target_label_prefers_selected_contact() {
         let mut app = App::new(0);
         app.contacts.push(contact("Bob", [9; 6]));
-        app.selected_contact = Some(0);
+        app.select_contact(0);
         assert_eq!(app.target_label(), "Bob");
     }
 
@@ -527,8 +555,37 @@ mod tests {
     #[test]
     fn target_label_with_stale_selection_is_active_channel() {
         let mut app = App::new(0);
-        app.selected_contact = Some(4);
+        app.selected_key = Some([4; 32]);
         assert_eq!(app.target_label(), "CH#0");
+    }
+
+    #[test]
+    fn select_contact_out_of_range_selects_nothing() {
+        let mut app = app_with_contacts(1);
+        app.select_contact(0);
+        app.select_contact(1);
+        assert_eq!(app.selected_key, None);
+    }
+
+    #[test]
+    fn contacts_reload_keeps_selection_on_the_same_contact() {
+        let mut app = app_with_contacts(2);
+        app.select_contact(1);
+        let reordered = vec![app.contacts[1].clone(), app.contacts[0].clone()];
+        app.set_contacts(reordered);
+        assert_eq!(app.selected_contact().unwrap().adv_name, "c1");
+        assert_eq!(app.selected_index(), Some(0));
+    }
+
+    #[test]
+    fn contacts_reload_without_the_selected_contact_deselects() {
+        let mut app = app_with_contacts(2);
+        app.select_contact(1);
+        let remaining = vec![app.contacts[0].clone()];
+        app.set_contacts(remaining);
+        assert_eq!(app.selected_key, None);
+        assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
+        assert_eq!(last_message(&app), "Contact c1 is no longer in the list; deselected");
     }
 
     #[test]

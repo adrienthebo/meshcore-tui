@@ -98,24 +98,15 @@ impl App {
                 };
             }
             KeyCode::Up if self.panel == Panel::Contacts => {
-                if let Some(s) = self.selected_contact {
-                    if s > 0 {
-                        self.selected_contact = Some(s - 1);
-                    }
-                } else if !self.contacts.is_empty() {
-                    self.selected_contact = Some(0);
-                }
+                let idx = self.selected_index().map_or(0, |s| s.saturating_sub(1));
+                self.select_contact(idx);
             }
             KeyCode::Down if self.panel == Panel::Contacts => {
-                if let Some(s) = self.selected_contact {
-                    if s + 1 < self.contacts.len() {
-                        self.selected_contact = Some(s + 1);
-                    }
-                } else if !self.contacts.is_empty() {
-                    self.selected_contact = Some(0);
-                }
+                let last = self.contacts.len().saturating_sub(1);
+                let idx = self.selected_index().map_or(0, |s| (s + 1).min(last));
+                self.select_contact(idx);
             }
-            KeyCode::F(1) => self.selected_contact = None,
+            KeyCode::F(1) => self.selected_key = None,
             _ => {}
         }
         None
@@ -271,18 +262,18 @@ mod tests {
     fn arrows_select_contacts_only_in_contacts_panel() {
         let mut app = app_with_contacts(3);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.selected_contact, None);
+        assert_eq!(app.selected_index(), None);
         app.panel = Panel::Contacts;
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.selected_contact, Some(0));
+        assert_eq!(app.selected_index(), Some(0));
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.selected_contact, Some(2));
+        assert_eq!(app.selected_index(), Some(2));
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.selected_contact, Some(0));
+        assert_eq!(app.selected_index(), Some(0));
     }
 
     #[test]
@@ -290,7 +281,7 @@ mod tests {
         let mut app = app_with_contacts(2);
         app.panel = Panel::Contacts;
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.selected_contact, Some(0));
+        assert_eq!(app.selected_index(), Some(0));
     }
 
     #[test]
@@ -299,14 +290,14 @@ mod tests {
         app.panel = Panel::Contacts;
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.selected_contact, None);
+        assert_eq!(app.selected_key, None);
     }
 
     #[test]
     fn f1_clears_contact_selection() {
         let mut app = app_with_contacts(1);
-        app.selected_contact = Some(0);
+        app.select_contact(0);
         press(&mut app, KeyCode::F(1));
-        assert_eq!(app.selected_contact, None);
+        assert_eq!(app.selected_key, None);
     }
 }
