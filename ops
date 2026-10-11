@@ -1,0 +1,1 @@
+{"author":{"id":"4ccc4b7a7c452e86b8463bda8bf20f8721c0f4512d1990a7cf284e5cd66bd67f"},"ops":[{"type":1,"timestamp":1791693017,"nonce":"Qw3uRN1BOXts1Omypf8QOJI4Tjo=","title":"Symptom: long messages break in the middle of words.","message":"Cause: wrap_to_width splits on display width only.","files":null}]}
