@@ -22,8 +22,8 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
 use app::App;
-use commands::handle_command;
-use radio::{connect, send_message, setup_subscriptions};
+use commands::run_radio_command;
+use radio::{connect, send_text, setup_subscriptions};
 use ui::draw;
 use update::{update, Effect, Msg};
 
@@ -63,18 +63,16 @@ fn bell() {
 /// Carry out the effects `update` asked for
 async fn run_effects(effects: Vec<Effect>, app: &mut App, mc: Option<&MeshCore>) {
     for effect in effects {
-        match effect {
-            Effect::Alert => bell(),
-            Effect::Submit(text) => {
-                if text.starts_with('/') {
-                    handle_command(&text, app, mc).await;
-                } else if let Some(mc) = mc {
-                    send_message(mc, app, &text).await;
-                } else {
-                    app.err("Not connected");
-                }
+        let outcome = match (effect, mc) {
+            (Effect::Alert, _) => {
+                bell();
+                continue;
             }
-        }
+            (Effect::Radio(cmd), Some(mc)) => run_radio_command(mc, cmd).await,
+            (Effect::Send { to, text }, Some(mc)) => send_text(mc, to, text).await,
+            (_, None) => Err("Not connected".to_string()),
+        };
+        app.apply_outcome(outcome);
     }
 }
 

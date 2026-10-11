@@ -7,6 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::{App, ChannelEntry};
 use crate::commands::Outcome;
+use crate::update::Recipient;
 use crate::text::sanitize;
 use crate::Args;
 
@@ -178,20 +179,14 @@ pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPay
     mc.start_auto_message_fetching().await;
 }
 
-pub async fn send_message(mc: &MeshCore, app: &mut App, text: &str) {
-    let contact = app.selected_contact.and_then(|idx| app.contacts.get(idx).cloned());
-    let channel = app.active_channel;
-
-    let outcome = if let Some(contact) = contact {
-        // Direct message to selected contact
-        mc.commands().lock().await.send_msg(&contact, text, None).await
-            .map(|info| Outcome::DirectSent { contact, text: text.to_string(), info })
-            .map_err(|e| format!("Send failed: {}", e))
-    } else {
-        // Channel message
-        mc.commands().lock().await.send_channel_msg(channel, text, None).await
-            .map(|_| Outcome::ChannelSent { channel, text: text.to_string() })
-            .map_err(|e| format!("Channel send failed: {}", e))
-    };
-    app.apply_outcome(outcome);
+/// Send a chat message; the error is the text to show the user
+pub async fn send_text(mc: &MeshCore, to: Recipient, text: String) -> Result<Outcome, String> {
+    match to {
+        Recipient::Contact(contact) => mc.commands().lock().await.send_msg(&contact, &text, None).await
+            .map(|info| Outcome::DirectSent { contact, text, info })
+            .map_err(|e| format!("Send failed: {}", e)),
+        Recipient::Channel(channel) => mc.commands().lock().await.send_channel_msg(channel, &text, None).await
+            .map(|_| Outcome::ChannelSent { channel, text })
+            .map_err(|e| format!("Channel send failed: {}", e)),
+    }
 }

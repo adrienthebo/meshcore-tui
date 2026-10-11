@@ -3,6 +3,7 @@ use meshcore_rs::MeshCore;
 
 use crate::app::{App, ChannelEntry};
 use crate::text::sanitize;
+use crate::update::{Effect, Recipient};
 
 /// Generate a channel secret from the operating system's secure random source
 fn random_secret() -> Result<[u8; 16], getrandom::Error> {
@@ -264,7 +265,7 @@ pub enum Outcome {
 }
 
 /// Run a command on the radio; the error is the text to show the user
-async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, String> {
+pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, String> {
     match cmd {
         Command::Contacts => mc.commands().lock().await.get_contacts(0).await
             .map(Outcome::Contacts)
@@ -339,23 +340,35 @@ impl App {
     }
 }
 
-pub async fn handle_command(input: &str, app: &mut App, mc: Option<&MeshCore>) {
-    let cmd = match parse_command(input) {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            app.err(&e);
-            return;
+impl App {
+    /// Interpret a submitted input line; returns the radio work it calls for
+    pub fn submit(&mut self, line: &str) -> Option<Effect> {
+        let effect = if line.starts_with('/') {
+            let cmd = match parse_command(line) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    self.err(&e);
+                    return None;
+                }
+            };
+            Effect::Radio(self.apply_local(cmd)?)
+        } else {
+            Effect::Send { to: self.recipient(), text: line.to_string() }
+        };
+        if !self.connected {
+            self.err("Not connected");
+            return None;
         }
-    };
-    let Some(cmd) = app.apply_local(cmd) else {
-        return;
-    };
-    let Some(mc) = mc else {
-        app.err("Not connected");
-        return;
-    };
-    let outcome = run_radio_command(mc, cmd).await;
-    app.apply_outcome(outcome);
+        Some(effect)
+    }
+
+    /// Where a message goes: the selected contact, else the active channel
+    fn recipient(&self) -> Recipient {
+        match self.selected_contact.and_then(|idx| self.contacts.get(idx)) {
+            Some(contact) => Recipient::Contact(contact.clone()),
+            None => Recipient::Channel(self.active_channel),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -599,6 +612,61 @@ mod tests {
             assert_eq!(format!("{:?}", returned), expected);
         }
         assert!(app.messages.is_empty());
+    }
+
+    // ── Submitted lines ──────────────────────────────────────────────────────
+
+    fn connected_app() -> App {
+        let mut app = app_with_contacts(2);
+        app.connected = true;
+        app
+    }
+
+    #[test]
+    fn submit_shows_parse_errors() {
+        let mut app = connected_app();
+        assert!(app.submit("/nope").is_none());
+        assert_eq!(last_message(&app), "Unknown command: /nope");
+    }
+
+    #[test]
+    fn submit_applies_local_commands() {
+        let mut app = connected_app();
+        assert!(app.submit("/public").is_none());
+        assert_eq!(last_message(&app), "Switched to CH#0");
+    }
+
+    #[test]
+    fn submit_runs_radio_commands_on_the_radio() {
+        let mut app = connected_app();
+        assert!(matches!(app.submit("/bat"), Some(Effect::Radio(Command::Battery))));
+    }
+
+    #[test]
+    fn submit_sends_text_to_the_selected_contact() {
+        let mut app = connected_app();
+        app.selected_contact = Some(1);
+        let effect = app.submit("hi");
+        assert!(matches!(effect, Some(Effect::Send { to: Recipient::Contact(ref c), ref text })
+            if c.adv_name == "c1" && text == "hi"));
+    }
+
+    #[test]
+    fn submit_sends_text_to_the_active_channel() {
+        let mut app = connected_app();
+        app.active_channel = 1;
+        assert!(matches!(app.submit("hi"), Some(Effect::Send { to: Recipient::Channel(1), .. })));
+    }
+
+    #[test]
+    fn submit_while_offline_runs_only_local_commands() {
+        let mut app = App::new(0);
+        assert!(app.submit("hi").is_none());
+        assert_eq!(last_message(&app), "Not connected");
+        assert!(app.submit("/bat").is_none());
+        assert_eq!(last_message(&app), "Not connected");
+        assert!(app.submit("/public").is_none());
+        assert_eq!(last_message(&app), "Switched to CH#0");
     }
 
     // ── Radio outcomes ───────────────────────────────────────────────────────

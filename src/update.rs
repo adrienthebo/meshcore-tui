@@ -1,7 +1,8 @@
 use crossterm::event::KeyEvent;
-use meshcore_rs::events::EventPayload;
+use meshcore_rs::events::{Contact, EventPayload};
 
 use crate::app::App;
+use crate::commands::Command;
 
 /// Something that happened, for `update` to apply to the app
 pub enum Msg {
@@ -9,19 +10,28 @@ pub enum Msg {
     Radio(EventPayload),
 }
 
+/// Who an outgoing message is addressed to
+#[derive(Debug)]
+pub enum Recipient {
+    Contact(Contact),
+    Channel(u8),
+}
+
 /// Work outside the app state that `update` asks the main loop to carry out
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Effect {
     /// Get the user's attention because a chat message arrived
     Alert,
-    /// Run a submitted input line as a slash command or outgoing message
-    Submit(String),
+    /// Run a slash command on the radio
+    Radio(Command),
+    /// Send a chat message
+    Send { to: Recipient, text: String },
 }
 
 /// Apply a message to the app; returns the effects it calls for
 pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Key(key) => app.handle_key(key).map(Effect::Submit).into_iter().collect(),
+        Msg::Key(key) => app.handle_key(key).and_then(|line| app.submit(&line)).into_iter().collect(),
         Msg::Radio(payload) => {
             if app.apply_radio_event(payload) {
                 vec![Effect::Alert]
@@ -46,23 +56,25 @@ mod tests {
     fn chat_message_alerts() {
         let mut app = App::new(0);
         let msg = Msg::Radio(EventPayload::ChannelMessage(channel_message(0, "Bob: hi")));
-        assert_eq!(update(&mut app, msg), vec![Effect::Alert]);
+        assert!(matches!(update(&mut app, msg)[..], [Effect::Alert]));
         assert_eq!(last_message(&app), "hi");
     }
 
     #[test]
     fn other_radio_events_do_not_alert() {
         let mut app = App::new(0);
-        assert_eq!(update(&mut app, Msg::Radio(EventPayload::Ack { tag: [0; 4] })), vec![]);
+        assert!(update(&mut app, Msg::Radio(EventPayload::Ack { tag: [0; 4] })).is_empty());
         assert_eq!(app.packets.len(), 1);
     }
 
     #[test]
     fn enter_submits_the_input_line() {
         let mut app = App::new(0);
-        assert_eq!(update(&mut app, key(KeyCode::Char('h'))), vec![]);
-        assert_eq!(update(&mut app, key(KeyCode::Char('i'))), vec![]);
-        assert_eq!(update(&mut app, key(KeyCode::Enter)), vec![Effect::Submit("hi".to_string())]);
+        app.connected = true;
+        assert!(update(&mut app, key(KeyCode::Char('h'))).is_empty());
+        assert!(update(&mut app, key(KeyCode::Char('i'))).is_empty());
+        let effects = update(&mut app, key(KeyCode::Enter));
+        assert!(matches!(&effects[..], [Effect::Send { text, .. }] if text == "hi"));
         assert_eq!(app.input.as_str(), "");
     }
 }
