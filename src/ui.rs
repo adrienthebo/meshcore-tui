@@ -295,14 +295,23 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(w, area);
 }
 
-/// Noise floor range the graph spans; the firmware never reports below -120 dBm
-const NOISE_GRAPH_MIN_DBM: i16 = -120;
-const NOISE_GRAPH_MAX_DBM: i16 = -80;
+/// Smallest dB range the noise graph spans, so 1 dB of jitter doesn't fill its height
+const NOISE_GRAPH_MIN_SPAN_DB: i16 = 10;
+/// Bar height of a reading at the bottom of the graph, so it draws the smallest bar
+/// in a 3-row graph and stays distinct from a gap
+const NOISE_BAR_FLOOR: u64 = 5;
+/// Bar height added by a reading at the top of the graph
+const NOISE_BAR_SCALE: u64 = 100;
 
-/// Bar height for a noise floor reading, offset so a reading at the graph's floor
-/// still draws the smallest bar in a 3-row graph and stays distinct from a gap
-fn noise_bar(dbm: i16) -> u64 {
-    (dbm.clamp(NOISE_GRAPH_MIN_DBM, NOISE_GRAPH_MAX_DBM) - NOISE_GRAPH_MIN_DBM + 3) as u64
+/// The dB range to graph: from the lowest visible reading up, at least NOISE_GRAPH_MIN_SPAN_DB tall
+fn noise_graph_range(min: i16, max: i16) -> (i16, i16) {
+    (min, max.max(min + NOISE_GRAPH_MIN_SPAN_DB))
+}
+
+/// Bar height for a noise floor reading within the graph's range
+fn noise_bar(dbm: i16, (low, high): (i16, i16)) -> u64 {
+    let above_low = (dbm.clamp(low, high) - low) as u64;
+    NOISE_BAR_FLOOR + above_low * NOISE_BAR_SCALE / (high - low) as u64
 }
 
 fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
@@ -327,18 +336,22 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
 
     // Newest first, drawn from the right edge, so the latest reading is rightmost
     let visible: Vec<Option<i16>> = stats.noise_history.iter().rev().take(inner.width as usize).copied().collect();
-    let readings = visible.iter().flatten();
-    let range = match (readings.clone().min(), readings.max()) {
-        (Some(min), Some(max)) => format!("  (min {} / max {})", min, max),
-        _ => String::new(),
-    };
+    let readings = visible.iter().flatten().copied();
+    let min_max = readings.clone().min().zip(readings.max());
+    let range = min_max
+        .map(|(min, max)| format!("  (min {} / max {})", min, max))
+        .unwrap_or_default();
     let header = format!("Noise {} dBm{}", latest.noise_floor, range);
     f.render_widget(Paragraph::new(header).style(Style::default().fg(Color::White)), rows[0]);
 
-    let bars: Vec<SparklineBar> = visible.iter().map(|r| SparklineBar::from(r.map(noise_bar))).collect();
+    let graph = min_max.map(|(min, max)| noise_graph_range(min, max));
+    let bars: Vec<SparklineBar> = visible
+        .iter()
+        .map(|r| SparklineBar::from(r.zip(graph).map(|(dbm, graph)| noise_bar(dbm, graph))))
+        .collect();
     let sparkline = Sparkline::default()
         .data(bars)
-        .max(noise_bar(NOISE_GRAPH_MAX_DBM))
+        .max(NOISE_BAR_FLOOR + NOISE_BAR_SCALE)
         .direction(RenderDirection::RightToLeft)
         .style(Style::default().fg(Color::Green));
     f.render_widget(sparkline, rows[1]);
@@ -568,12 +581,25 @@ mod tests {
     }
 
     #[test]
-    fn noise_bars_clamp_to_the_graph_range() {
-        assert_eq!(noise_bar(-130), 3);
-        assert_eq!(noise_bar(NOISE_GRAPH_MIN_DBM), 3);
-        assert_eq!(noise_bar(-100), 23);
-        assert_eq!(noise_bar(NOISE_GRAPH_MAX_DBM), 43);
-        assert_eq!(noise_bar(-60), 43);
+    fn noise_graph_spans_the_readings_but_at_least_the_minimum() {
+        assert_eq!(noise_graph_range(-115, -90), (-115, -90));
+        assert_eq!(noise_graph_range(-108, -107), (-108, -98));
+    }
+
+    #[test]
+    fn noise_bars_scale_within_the_graph_range() {
+        let graph = (-108, -98);
+        assert_eq!(noise_bar(-108, graph), NOISE_BAR_FLOOR);
+        assert_eq!(noise_bar(-103, graph), NOISE_BAR_FLOOR + 50);
+        assert_eq!(noise_bar(-98, graph), NOISE_BAR_FLOOR + NOISE_BAR_SCALE);
+    }
+
+    #[test]
+    fn one_db_of_change_is_visible() {
+        let app = app_with_noise(&[Some(-108), Some(-107)]);
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, area)));
+        let column = |x: usize| -> String { rows[2..5].iter().map(|r| r.chars().nth(x).unwrap()).collect() };
+        assert_ne!(column(47), column(48));
     }
 
     #[test]
