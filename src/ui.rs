@@ -40,13 +40,24 @@ fn draw_tab_bar(f: &mut Frame, ui: &Ui, area: Rect) {
     let bar = TabBar::new(&titles, ui.active)
         .active_style(Style::default().fg(ui.theme.focus))
         .rule_style(Style::default().fg(ui.theme.muted));
+    let room = (area.width as usize).saturating_sub(bar.titles_width());
     f.render_widget(bar, area);
 
-    let hints = format!(" {} ", ui.key_hints().join("  "));
+    let hints = fit_hints(&ui.key_hints(), room);
     let rule = Rect { y: area.y + 1, height: 1, ..area };
     // Style the span, not the line: a line's style covers the whole row and would recolour the rule
     let hints = Line::from(Span::styled(hints, Style::default().fg(ui.theme.text))).right_aligned();
     f.render_widget(hints, rule);
+}
+
+/// As many hints as fit in `width` columns, padded by a space each side; the
+/// first hints are the focused panel's, so the last ones are left out first
+fn fit_hints(hints: &[&str], width: usize) -> String {
+    (1..=hints.len())
+        .rev()
+        .map(|shown| format!(" {} ", hints[..shown].join("  ")))
+        .find(|text| text.width() <= width)
+        .unwrap_or_default()
 }
 
 /// Lay out the Overview's panels and draw each, highlighting the one with focus
@@ -431,7 +442,7 @@ pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, fo
 }
 
 /// A panel with a rounded border and a bold title
-fn panel<'a>(theme: &Theme, title: impl Into<String>, border: Color) -> Block<'a> {
+pub fn panel<'a>(theme: &Theme, title: impl Into<String>, border: Color) -> Block<'a> {
     let title_style = Style::default()
         .fg(theme.title.unwrap_or(border))
         .add_modifier(Modifier::BOLD);
@@ -714,6 +725,14 @@ mod tests {
         assert_eq!(buffer[(78, 4)].fg, ui.theme.text);
         assert_eq!(buffer[(79, 5)].fg, ui.theme.focus);
         assert_eq!(buffer[(0, 5)].fg, ui.theme.messages_border);
+    }
+
+    #[test]
+    fn hints_that_dont_fit_are_left_out_from_the_end() {
+        let hints = ["Enter=send", "Tab=panel", "Esc=quit"];
+        assert_eq!(fit_hints(&hints, 80), " Enter=send  Tab=panel  Esc=quit ");
+        assert_eq!(fit_hints(&hints, 24), " Enter=send  Tab=panel ");
+        assert_eq!(fit_hints(&hints, 11), "");
     }
 
     #[test]

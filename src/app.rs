@@ -27,6 +27,17 @@ pub struct ChatMessage {
     pub msg_type: MsgType,
 }
 
+/// An advert the radio heard
+#[derive(Clone, Debug)]
+pub struct AdvertEntry {
+    pub timestamp: String,
+    /// The contact's name, or its key prefix in hex when it isn't a contact
+    pub name: String,
+    /// The contact a new contact's advert added; None when a known contact
+    /// advertised again, which the radio reports with only its key
+    pub new_contact: Option<Contact>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MsgType {
     Incoming,
@@ -53,6 +64,8 @@ pub struct App {
     /// Maps firmware channel_idx → local channel index for received message lookup
     pub fw_channel_map: HashMap<u8, u8>,
     pub packets: Vec<PacketLogEntry>,
+    /// Adverts heard, oldest first
+    pub adverts: Vec<AdvertEntry>,
     /// Public key of the contact messages go to; None sends to the active channel
     pub selected_key: Option<[u8; 32]>,
     pub self_info: Option<SelfInfo>,
@@ -74,6 +87,7 @@ impl App {
             channels: HashMap::new(),
             fw_channel_map: HashMap::new(),
             packets: Vec::new(),
+            adverts: Vec::new(),
             selected_key: None,
             self_info: None,
             battery_level: None,
@@ -114,6 +128,19 @@ impl App {
         if self.packets.len() > MAX_PACKETS {
             let excess = self.packets.len() - MAX_PACKETS;
             self.packets.drain(..excess);
+        }
+    }
+
+    /// Append an advert, dropping the oldest beyond MAX_ADVERTS
+    fn push_advert(&mut self, name: String, new_contact: Option<Contact>) {
+        self.adverts.push(AdvertEntry {
+            timestamp: now(),
+            name,
+            new_contact,
+        });
+        if self.adverts.len() > MAX_ADVERTS {
+            let excess = self.adverts.len() - MAX_ADVERTS;
+            self.adverts.drain(..excess);
         }
     }
 
@@ -178,7 +205,8 @@ impl App {
     /// A known contact advertised again; the push carries only their key
     fn on_advertisement(&mut self, adv: &AdvertisementData) {
         let who = self.resolve_key(&adv.public_key);
-        self.push_packet("ADV", 0, who);
+        self.push_packet("ADV", 0, who.clone());
+        self.push_advert(who, None);
     }
 
     fn on_new_contact(&mut self, contact: Contact) {
@@ -190,6 +218,7 @@ impl App {
             contact.longitude(),
         );
         self.push_packet("ADV", hop_count(contact.path_len), info);
+        self.push_advert(sanitize(&contact.adv_name), Some(contact.clone()));
         self.contacts.retain(|c| c.prefix() != contact.prefix());
         self.contacts.push(contact);
     }
@@ -328,6 +357,7 @@ impl App {
 
 const MAX_MESSAGES: usize = 1000;
 const MAX_PACKETS: usize = 100;
+const MAX_ADVERTS: usize = 100;
 
 /// Hop count for display; a negative path length means the path is unknown (flood)
 fn hop_count(path_len: i8) -> u8 {
@@ -408,6 +438,28 @@ mod tests {
         let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
         assert_eq!(infos, vec!["10101010101", "Repeater"]);
         assert!(app.packets.iter().all(|p| p.ptype == "ADV"));
+        let adverts: Vec<&str> = app.adverts.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(adverts, vec!["10101010101", "Repeater"]);
+        assert!(app.adverts.iter().all(|a| a.new_contact.is_none()));
+    }
+
+    #[test]
+    fn new_contact_advert_keeps_the_contact() {
+        let mut app = App::new(0);
+        app.on_new_contact(contact("Bob\u{FFFD}", [3; 6]));
+        let advert = app.adverts.last().unwrap();
+        assert_eq!(advert.name, "Bob");
+        assert_eq!(advert.new_contact.as_ref().unwrap().public_key, contact("Bob", [3; 6]).public_key);
+    }
+
+    #[test]
+    fn adverts_are_capped_keeping_newest() {
+        let mut app = App::new(0);
+        for i in 0..MAX_ADVERTS + 5 {
+            app.on_new_contact(contact(&format!("c{}", i), [1; 6]));
+        }
+        assert_eq!(app.adverts.len(), MAX_ADVERTS);
+        assert_eq!(app.adverts.last().unwrap().name, format!("c{}", MAX_ADVERTS + 4));
     }
 
     #[test]

@@ -1,0 +1,20 @@
+---
+source: src/contacts_tab.rs
+expression: "render(&app_with_heard_contacts(), &ContactsTab::default(), 80, 16)"
+---
+"╭ Contacts (4) ────────────────────────────────────────────────────────────────╮"
+"│Name                   Type     Key      Last advert Hops  Position           │"
+"│Alice                  Chat     a1a1a1a1 5m ago      2     52.0089, 4.3531    │"
+"│Hilltop                Repeater b2b2b2b2 1h3m ago    flood —                  │"
+"│Never heard            Chat     c3c3c3c3 —           0     —                  │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╭ Adverts ─────────────────────────────────────────────────────────────────────╮"
+"│12:34:56 again Alice                                                          │"
+"│12:34:56 new   Bob [d4d4d4d4d4d4] 0 hops —                                    │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"

@@ -37,6 +37,16 @@ impl<'a> TabBar<'a> {
         self.rule = style;
         self
     }
+
+    /// Columns the titles take, from the left edge to the rule after the last one
+    pub fn titles_width(&self) -> usize {
+        1 + self
+            .titles
+            .iter()
+            .enumerate()
+            .map(|(i, title)| format!(" {} {} ", i + 1, title).width() + 3)
+            .sum::<usize>()
+    }
 }
 
 impl Widget for TabBar<'_> {
@@ -124,6 +134,14 @@ mod tests {
         assert_eq!(buf[(5, 1)].fg, Color::DarkGray);
         assert!(!buf[(5, 1)].modifier.contains(Modifier::BOLD));
         assert_eq!(buf[(59, 1)].fg, Color::DarkGray);
+    }
+
+    #[test]
+    fn titles_width_ends_after_the_last_titles_rule() {
+        let bar = TabBar::new(&TITLES, 1);
+        let width = bar.titles_width();
+        let row = &rows(&render(bar, 60))[1];
+        assert_eq!(row.chars().take(width).collect::<String>(), "── 1 Overview ──╯ 2 Contacts ╰── 3 Radio ─── 4 Raw ──");
     }
 
     #[test]

@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, Frame};
 
 use crate::app::App;
+use crate::contacts_tab::ContactsTab;
 use crate::overview::Overview;
 use crate::theme::Theme;
 use crate::update::Action;
@@ -42,7 +43,7 @@ pub struct Ui {
 impl Ui {
     pub fn new(theme: Theme) -> Self {
         Self {
-            tabs: vec![Box::new(Overview::default())],
+            tabs: vec![Box::new(Overview::default()), Box::new(ContactsTab::default())],
             active: 0,
             theme,
         }
@@ -108,9 +109,10 @@ mod tests {
         }
     }
 
+    /// The Overview, then the Probe
     fn ui_with_probe() -> Ui {
         let mut ui = test_ui();
-        ui.tabs.push(Box::new(Probe));
+        ui.tabs = vec![Box::new(Overview::default()), Box::new(Probe)];
         ui
     }
 
@@ -151,11 +153,14 @@ mod tests {
 
     #[test]
     fn key_hints_add_the_shared_keys_to_the_tabs() {
-        let mut ui = test_ui();
-        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect", "Esc=quit"]);
-        ui.tabs.push(Box::new(Probe));
+        let mut ui = ui_with_probe();
+        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect", "Alt+N=tab", "Esc=quit"]);
         ui.active = 1;
         assert_eq!(ui.key_hints(), ["Alt+N=tab", "Esc=quit"]);
+        // With one tab there's nothing to switch to
+        ui.tabs.truncate(1);
+        ui.active = 0;
+        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect", "Esc=quit"]);
     }
 
     #[test]
