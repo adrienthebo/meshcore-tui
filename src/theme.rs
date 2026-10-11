@@ -15,10 +15,12 @@ pub struct Theme {
     pub info: Color,
     /// Radio parameters
     pub value: Color,
-    /// Counters and a live connection
+    /// Counters
     pub good: Color,
     /// Errors and a lost connection
     pub bad: Color,
+    /// The connection indicator while connected
+    pub connected: Color,
 
     pub status_border: Color,
     pub messages_border: Color,
@@ -57,6 +59,7 @@ impl Theme {
         value: Color::Yellow,
         good: Color::Green,
         bad: Color::Red,
+        connected: Color::Green,
 
         status_border: Color::Cyan,
         messages_border: Color::Cyan,
@@ -93,6 +96,7 @@ impl Theme {
         value: CERISE_PINK,
         good: AQUAMARINE,
         bad: PERSIAN_ROSE,
+        connected: NEON_GREEN,
 
         status_border: MAYA_BLUE,
         messages_border: MAYA_BLUE,
@@ -128,6 +132,7 @@ const LAVENDER_INDIGO: Color = Color::Rgb(0x9c, 0x5b, 0xff);
 const AQUAMARINE: Color = Color::Rgb(0x65, 0xf4, 0xda);
 const PINK_LAVENDER: Color = Color::Rgb(0xef, 0xb7, 0xff);
 const MAYA_BLUE: Color = Color::Rgb(0x5b, 0xc8, 0xf5);
+const NEON_GREEN: Color = Color::Rgb(0x26, 0xff, 0x4e);
 
 /// The themes selectable with --theme
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]

@@ -69,7 +69,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             if app.connected { "● Connected" } else { "○ Disconnected" },
             Style::default().fg(if app.connected {
-                theme.good
+                theme.connected
             } else {
                 theme.bad
             }),
@@ -620,6 +620,15 @@ mod tests {
         assert_eq!(buffer[(0, 0)].fg, app.theme.status_border);
         assert_eq!(buffer[(79, 3)].fg, app.theme.focus);
         assert_eq!(buffer[(0, 3)].fg, app.theme.messages_border);
+    }
+
+    #[test]
+    fn connection_indicator_uses_the_connected_colour() {
+        let mut app = connected_app();
+        app.theme = Theme::VAPORWAVE;
+        let backend = render_panel(120, 3, |f, area| draw_status(f, &app, area));
+        let indicator = backend.buffer().content().iter().find(|c| c.symbol() == "●").unwrap();
+        assert_eq!(indicator.fg, Color::Rgb(0x26, 0xff, 0x4e));
     }
 
     #[test]
