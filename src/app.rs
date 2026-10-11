@@ -7,7 +7,9 @@ use meshcore_rs::events::{
 };
 
 use crate::input::InputLine;
+use crate::stats::RadioStats;
 use crate::text::sanitize;
+use crate::update::Effect;
 
 /// Stored channel info
 #[derive(Clone, Debug)]
@@ -70,6 +72,7 @@ pub struct App {
     pub rx_count: u32,
     pub tx_count: u32,
     pub connected: bool,
+    pub radio_stats: RadioStats,
     pub should_quit: bool,
 }
 
@@ -91,6 +94,7 @@ impl App {
             rx_count: 0,
             tx_count: 0,
             connected: false,
+            radio_stats: RadioStats::default(),
             should_quit: false,
         }
     }
@@ -235,6 +239,11 @@ impl App {
         self.tx_count += 1;
         let sender = format!("\u{2192} {}", self.channel_label(channel));
         self.push_message(sender, text.into(), MsgType::Outgoing);
+    }
+
+    /// The stats poll interval elapsed; asks the radio for stats when connected and idle
+    pub fn poll_radio_stats(&mut self) -> Option<Effect> {
+        (self.connected && self.radio_stats.start_poll()).then_some(Effect::PollRadioStats)
     }
 
     pub fn device_name(&self) -> String {

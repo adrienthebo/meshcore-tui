@@ -1,4 +1,4 @@
-use meshcore_rs::events::{ChannelMessage, Contact, ContactMessage};
+use meshcore_rs::events::{ChannelMessage, Contact, ContactMessage, RadioStatsData};
 
 use crate::app::{App, ChannelEntry};
 
@@ -22,6 +22,16 @@ pub fn channel_message(channel_idx: u8, text: &str) -> ChannelMessage {
         sender_timestamp: 0,
         text: text.to_string(),
         snr: None,
+    }
+}
+
+pub fn radio_stats(noise_floor: i16) -> RadioStatsData {
+    RadioStatsData {
+        noise_floor,
+        last_rssi: -90,
+        last_snr: 5.25,
+        tx_air_secs: 12,
+        rx_air_secs: 340,
     }
 }
 

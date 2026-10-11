@@ -178,6 +178,7 @@ pub async fn run_radio_effects(
         let outcome = match effect {
             Effect::Radio(cmd) => run_radio_command(&mc, cmd).await,
             Effect::Send { to, text } => send_text(&mc, to, text).await,
+            Effect::PollRadioStats => read_radio_stats(&mc).await,
             // The main loop handles alerts itself
             Effect::Alert => continue,
         };
@@ -186,6 +187,12 @@ pub async fn run_radio_effects(
             break;
         }
     }
+}
+
+/// Read the radio's stats; a failed read is part of the outcome so polling can report it once
+async fn read_radio_stats(mc: &MeshCore) -> Result<Outcome, String> {
+    let stats = mc.commands().lock().await.get_radio_stats().await.map_err(|e| e.to_string());
+    Ok(Outcome::RadioStats(stats))
 }
 
 /// Send a chat message; the error is the text to show the user

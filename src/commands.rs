@@ -1,7 +1,8 @@
-use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo};
+use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo, RadioStatsData};
 use meshcore_rs::MeshCore;
 
 use crate::app::{App, ChannelEntry};
+use crate::stats::PollNotice;
 use crate::text::sanitize;
 use crate::update::{Effect, Recipient};
 
@@ -262,6 +263,8 @@ pub enum Outcome {
         channel: u8,
         text: String,
     },
+    /// A stats poll's result; a failed poll is reported once, not on every poll
+    RadioStats(Result<RadioStatsData, String>),
 }
 
 /// Run a command on the radio; the error is the text to show the user
@@ -329,6 +332,11 @@ impl App {
             }
             Outcome::DirectSent { contact, text, info } => self.on_direct_sent(&contact, &text, &info),
             Outcome::ChannelSent { channel, text } => self.on_channel_sent(channel, &text),
+            Outcome::RadioStats(result) => match self.radio_stats.record(result) {
+                Some(PollNotice::Failed(e)) => self.err(&format!("Radio stats unavailable: {}", e)),
+                Some(PollNotice::Recovered) => self.sys("Radio stats available again"),
+                None => {}
+            },
         }
     }
 }
@@ -743,6 +751,26 @@ mod tests {
         assert!(app.channels.is_empty());
         assert!(app.fw_channel_map.is_empty());
         assert!(last_message(&app).starts_with("Channel #1 (fw#5): name=''"));
+    }
+
+    #[test]
+    fn radio_stats_outcome_records_the_reading() {
+        let mut app = App::new(0);
+        app.apply_outcome(Ok(Outcome::RadioStats(Ok(radio_stats(-110)))));
+        assert_eq!(app.radio_stats.latest.unwrap().noise_floor, -110);
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn radio_stats_failures_show_one_error_and_one_recovery() {
+        let mut app = App::new(0);
+        for _ in 0..3 {
+            app.apply_outcome(Ok(Outcome::RadioStats(Err("timeout".to_string()))));
+        }
+        app.apply_outcome(Ok(Outcome::RadioStats(Ok(radio_stats(-110)))));
+        let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["Radio stats unavailable: timeout", "Radio stats available again"]);
+        assert_eq!(app.messages[0].msg_type, MsgType::Error);
     }
 
     #[test]

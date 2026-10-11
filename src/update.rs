@@ -10,6 +10,8 @@ pub enum Msg {
     Radio(EventPayload),
     /// The radio finished a command or send
     EffectDone(Result<Outcome, String>),
+    /// The stats poll interval elapsed
+    StatsPollDue,
 }
 
 /// Who an outgoing message is addressed to
@@ -28,6 +30,8 @@ pub enum Effect {
     Radio(Command),
     /// Send a chat message
     Send { to: Recipient, text: String },
+    /// Read the radio's stats
+    PollRadioStats,
 }
 
 /// Apply a message to the app; returns the effects it calls for
@@ -45,6 +49,7 @@ pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
             app.apply_outcome(outcome);
             Vec::new()
         }
+        Msg::StatsPollDue => app.poll_radio_stats().into_iter().collect(),
     }
 }
 
@@ -78,6 +83,17 @@ mod tests {
         let mut app = App::new(0);
         assert!(update(&mut app, Msg::EffectDone(Ok(Outcome::AdvertSent))).is_empty());
         assert_eq!(last_message(&app), "Advertisement sent");
+    }
+
+    #[test]
+    fn stats_poll_asks_the_radio_only_when_connected_and_idle() {
+        let mut app = App::new(0);
+        assert!(update(&mut app, Msg::StatsPollDue).is_empty());
+        app.connected = true;
+        assert!(matches!(update(&mut app, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        assert!(update(&mut app, Msg::StatsPollDue).is_empty());
+        update(&mut app, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
+        assert!(matches!(update(&mut app, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
     }
 
     #[test]

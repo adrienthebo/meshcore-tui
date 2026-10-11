@@ -2,6 +2,7 @@ mod app;
 mod commands;
 mod input;
 mod radio;
+mod stats;
 #[cfg(test)]
 mod test_support;
 mod text;
@@ -10,7 +11,7 @@ mod update;
 
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use crossterm::{
@@ -53,6 +54,9 @@ struct Args {
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
+
+/// How often to read the radio's stats; the firmware recalibrates its noise floor every 2 seconds
+const STATS_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Ring the terminal bell
 fn bell() {
@@ -117,12 +121,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Main loop
+    let mut next_stats_poll = Instant::now();
     loop {
         while let Ok(payload) = radio_events.try_recv() {
             dispatch(&mut app, Msg::Radio(payload), radio.as_ref());
         }
         while let Ok(outcome) = outcomes.try_recv() {
             dispatch(&mut app, Msg::EffectDone(outcome), radio.as_ref());
+        }
+        if Instant::now() >= next_stats_poll {
+            next_stats_poll = Instant::now() + STATS_POLL_INTERVAL;
+            dispatch(&mut app, Msg::StatsPollDue, radio.as_ref());
         }
 
         terminal.draw(|f| draw(f, &app))?;
