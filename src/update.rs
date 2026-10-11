@@ -43,8 +43,6 @@ pub enum Action {
     Submit(String),
     /// Address messages to the contact at this index
     SelectContact(usize),
-    /// Address messages to the active channel
-    Deselect,
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
@@ -74,7 +72,6 @@ fn apply_action(app: &mut App, action: Action) -> Vec<Effect> {
         Action::Quit => app.should_quit = true,
         Action::Submit(line) => return app.submit(&line).into_iter().collect(),
         Action::SelectContact(idx) => app.select_contact(idx),
-        Action::Deselect => app.selected_key = None,
     }
     Vec::new()
 }
@@ -142,12 +139,10 @@ mod tests {
     }
 
     #[test]
-    fn contact_actions_change_the_selection() {
+    fn select_contact_changes_the_selection() {
         let mut app = app_with_contacts(2);
         apply_action(&mut app, Action::SelectContact(1));
         assert_eq!(app.selected_index(), Some(1));
-        apply_action(&mut app, Action::Deselect);
-        assert_eq!(app.selected_key, None);
         apply_action(&mut app, Action::SelectContact(5));
         assert_eq!(app.selected_key, None);
     }

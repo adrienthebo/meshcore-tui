@@ -39,7 +39,7 @@ impl View for Overview {
     }
 
     /// The panel with focus gets keys first; Overview takes the ones it ignores:
-    /// Tab moves focus between panels and F1 deselects
+    /// Tab moves focus between panels
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         let result = self.focused_panel_mut().handle_key(key, app);
         if result != KeyResult::Ignored {
@@ -55,14 +55,13 @@ impl View for Overview {
                 };
                 KeyResult::Handled
             }
-            KeyCode::F(1) => KeyResult::Action(Action::Deselect),
             _ => KeyResult::Ignored,
         }
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
         let mut hints = self.focused_panel().key_hints();
-        hints.extend(["Tab=panel", "F1=deselect"]);
+        hints.push("Tab=panel");
         hints
     }
 }
@@ -199,8 +198,7 @@ mod tests {
     #[test]
     fn keys_the_focused_panel_ignores_reach_the_overview() {
         let (mut overview, app) = (Overview::default(), app_with_contacts(1));
-        // The input line ignores Tab and F1
-        assert_eq!(press(&mut overview, &app, KeyCode::F(1)), KeyResult::Action(Action::Deselect));
+        // The input line ignores Tab
         assert_eq!(press(&mut overview, &app, KeyCode::Tab), KeyResult::Handled);
         assert_eq!(overview.focus, Panel::Messages);
     }
@@ -237,17 +235,11 @@ mod tests {
     #[test]
     fn key_hints_follow_focus() {
         let mut overview = Overview::default();
-        assert_eq!(overview.key_hints(), ["Enter=send", "Tab=panel", "F1=deselect"]);
+        assert_eq!(overview.key_hints(), ["Enter=send", "Tab=panel"]);
         overview.focus = Panel::Contacts;
-        assert_eq!(overview.key_hints(), ["↑↓=contact", "Tab=panel", "F1=deselect"]);
+        assert_eq!(overview.key_hints(), ["↑↓=contact", "Tab=panel"]);
         overview.focus = Panel::Packets;
-        assert_eq!(overview.key_hints(), ["Tab=panel", "F1=deselect"]);
-    }
-
-    #[test]
-    fn f1_deselects() {
-        let (mut overview, app) = (Overview::default(), app_with_contacts(1));
-        assert_eq!(press(&mut overview, &app, KeyCode::F(1)), KeyResult::Action(Action::Deselect));
+        assert_eq!(overview.key_hints(), ["Tab=panel"]);
     }
 
     // ── ContactList ──────────────────────────────────────────────────────────

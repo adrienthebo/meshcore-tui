@@ -33,7 +33,7 @@ pub fn draw(f: &mut Frame, app: &App, ui: &Ui) {
     ui.active_tab().draw(f, chunks[2], app, &ui.theme, true);
 }
 
-/// Each tab's title, numbered with the digit that shows it alongside Alt, and the
+/// Each tab's title, numbered with the F-key that shows it, and the
 /// keys that work right now at the right end of the rule
 fn draw_tab_bar(f: &mut Frame, ui: &Ui, area: Rect) {
     let titles: Vec<&str> = ui.tabs.iter().map(|tab| tab.title()).collect();
