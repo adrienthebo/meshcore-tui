@@ -83,8 +83,12 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(40), Constraint::Length(30)])
         .split(area);
 
-    // Messages
-    let panel_width = (chunks[0].width as usize).saturating_sub(2); // border
+    draw_messages(f, app, chunks[0]);
+    draw_contacts(f, app, chunks[1]);
+}
+
+fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
+    let panel_width = (area.width as usize).saturating_sub(2); // border
     let items: Vec<ListItem> = app
         .messages
         .iter()
@@ -147,7 +151,7 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
         .collect::<Vec<_>>();
 
     // Take items from the end that fit in visible height
-    let visible_height = (chunks[0].height as usize).saturating_sub(2);
+    let visible_height = (area.height as usize).saturating_sub(2);
     let mut total_lines = 0usize;
     let mut start_idx = items.len();
     for (i, item) in items.iter().enumerate().rev() {
@@ -171,10 +175,11 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
             .title(format!(" {} — {} ", app.device_name(), app.target_label()))
             .border_style(Style::default().fg(bc)),
     );
-    f.render_widget(msg_w, chunks[0]);
+    f.render_widget(msg_w, area);
+}
 
-    // Contacts
-    let cpanel_width = (chunks[1].width as usize).saturating_sub(2); // minus borders
+fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
+    let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
     let citems: Vec<ListItem> = app
         .contacts
         .iter()
@@ -221,7 +226,7 @@ fn draw_main(f: &mut Frame, app: &App, area: Rect) {
             .title(format!(" Contacts ({}) ", app.contacts.len()))
             .border_style(Style::default().fg(cc)),
     );
-    f.render_widget(c_w, chunks[1]);
+    f.render_widget(c_w, area);
 }
 
 fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
@@ -368,51 +373,134 @@ mod tests {
         app
     }
 
-    #[test]
-    fn render_offline() {
-        insta::assert_snapshot!(render(&App::new(0), 80, 24));
+    /// Render one panel into a terminal of its own size and return its rows
+    fn render_panel(width: u16, height: u16, draw_panel: impl FnOnce(&mut Frame, Rect)) -> Vec<String> {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| draw_panel(f, f.area())).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
     }
 
+    fn rows_containing(rows: &[String], needle: &str) -> usize {
+        rows.iter().filter(|row| row.contains(needle)).count()
+    }
+
+    /// Full-screen layout check; expect to re-accept this when the layout changes
     #[test]
     fn render_connected_chat() {
         insta::assert_snapshot!(render(&connected_app(), 80, 24));
     }
 
     #[test]
-    fn render_selected_contact_with_input() {
+    fn status_shows_connection_state() {
+        let rows = render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area));
+        assert_eq!(rows_containing(&rows, "● Connected"), 1);
+        let rows = render_panel(120, 3, |f, area| draw_status(f, &App::new(0), area));
+        assert_eq!(rows_containing(&rows, "○ Disconnected"), 1);
+    }
+
+    #[test]
+    fn status_shows_radio_settings_and_counters() {
+        let rows = render_panel(120, 3, |f, area| draw_status(f, &connected_app(), area));
+        assert!(rows[1].contains("Port: /dev/ttyACM0 | 869.618 MHz | BW: 62.5 kHz | SF: 8 | CR: 5 | RX: 3 | TX: 1"));
+    }
+
+    #[test]
+    fn messages_title_shows_device_and_target() {
+        let rows = render_panel(60, 5, |f, area| draw_messages(f, &connected_app(), area));
+        assert!(rows[0].contains(" Base — Public "));
+    }
+
+    #[test]
+    fn messages_show_newest_when_overflowing() {
+        let mut app = App::new(0);
+        app.messages = (0..30)
+            .map(|i| chat_message("SYS", &format!("message {}", i), MsgType::System))
+            .collect();
+        // 8 rows minus borders leaves 6 visible messages: 24..=29
+        let rows = render_panel(60, 8, |f, area| draw_messages(f, &app, area));
+        assert_eq!(rows_containing(&rows, "message 29"), 1);
+        assert_eq!(rows_containing(&rows, "message 24"), 1);
+        assert_eq!(rows_containing(&rows, "message 23"), 0);
+    }
+
+    #[test]
+    fn messages_tag_each_type() {
+        let rows = render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), area));
+        assert!(rows[1].contains("[SYS] SYS: Connected"));
+        assert!(rows[2].contains("[MSG] Alice: hi there"));
+        assert!(rows[3].contains("[SND] \u{2192} Alice: hello!"));
+        assert!(rows[4].contains("[Ops] Carol: anyone on ops?"));
+        assert!(rows[5].contains("[ERR] ERR: Send failed: timeout"));
+    }
+
+    #[test]
+    fn wrapped_message_continues_under_the_text() {
+        let mut app = App::new(0);
+        app.messages = vec![chat_message("Alice", "abcdefghijklmnopqrstuvwxyz0123456789", MsgType::Incoming)];
+        // 38 columns inside the border; the 22-column prefix leaves 16 for text
+        let rows = render_panel(40, 6, |f, area| draw_messages(f, &app, area));
+        let indent = " ".repeat(22);
+        assert_eq!(rows[1], "│12:34:56 [MSG] Alice: abcdefghijklmnop│");
+        assert_eq!(rows[2], format!("│{}qrstuvwxyz012345│", indent));
+        assert_eq!(rows[3], format!("│{}6789{}│", indent, " ".repeat(12)));
+    }
+
+    #[test]
+    fn contacts_title_counts_contacts() {
+        let rows = render_panel(30, 5, |f, area| draw_contacts(f, &connected_app(), area));
+        assert!(rows[0].contains(" Contacts (2) "));
+    }
+
+    #[test]
+    fn contacts_mark_only_the_selected_contact() {
         let mut app = connected_app();
-        app.panel = Panel::Contacts;
-        app.selected_contact = Some(1);
-        for c in "typing…".chars() {
+        app.selected_contact = Some(0);
+        let rows = render_panel(30, 5, |f, area| draw_contacts(f, &app, area));
+        assert!(rows[1].starts_with("│▶ Alice (a1a1a1a1)"));
+        assert_eq!(rows_containing(&rows, "▶"), 1);
+    }
+
+    #[test]
+    fn contact_lines_are_truncated_to_the_panel() {
+        let rows = render_panel(20, 5, |f, area| draw_contacts(f, &connected_app(), area));
+        assert_eq!(rows[2], "│  Bob the very lon│");
+    }
+
+    #[test]
+    fn packets_show_newest_when_overflowing() {
+        let mut app = App::new(0);
+        app.packets = (0..10).map(|i| packet("ACK", 0, &format!("packet {}", i))).collect();
+        // 5 rows minus borders leaves 3 visible packets: 7..=9
+        let rows = render_panel(60, 5, |f, area| draw_packets(f, &app, area));
+        assert!(rows[1].contains("packet 7"));
+        assert!(rows[3].contains("packet 9"));
+        assert_eq!(rows_containing(&rows, "packet 6"), 0);
+    }
+
+    #[test]
+    fn packets_show_signal_only_when_known() {
+        let mut app = App::new(0);
+        let mut heard = packet("ADV", 1, "heard");
+        heard.rssi = -92;
+        heard.snr = 5.25;
+        app.packets = vec![packet("ACK", 0, "no signal"), heard];
+        let rows = render_panel(60, 4, |f, area| draw_packets(f, &app, area));
+        assert!(rows[1].contains("[ACK] H:0 | no signal"));
+        assert!(rows[2].contains("[ADV] H:1 R:-92dBm S:5.2dB | heard"));
+    }
+
+    #[test]
+    fn input_shows_text_and_send_target() {
+        let mut app = connected_app();
+        app.selected_contact = Some(0);
+        for c in "hello".chars() {
             app.input.insert(c);
         }
-        insta::assert_snapshot!(render(&app, 80, 24));
-    }
-
-    #[test]
-    fn render_wraps_long_messages() {
-        let mut app = connected_app();
-        app.messages.push(chat_message(
-            "Alice",
-            "this message is long enough that it has to wrap across several lines of the message panel",
-            MsgType::Incoming,
-        ));
-        app.messages.push(chat_message("Bob", "日本語のテキストも折り返す必要があります。日本語のテキスト", MsgType::Incoming));
-        insta::assert_snapshot!(render(&app, 80, 24));
-    }
-
-    #[test]
-    fn render_shows_newest_entries_when_panels_overflow() {
-        let mut app = connected_app();
-        for i in 0..30 {
-            app.messages.push(chat_message("SYS", &format!("message {}", i), MsgType::System));
-            app.packets.push(packet("ACK", 0, &format!("packet {}", i)));
-        }
-        insta::assert_snapshot!(render(&app, 80, 24));
-    }
-
-    #[test]
-    fn render_narrow_terminal() {
-        insta::assert_snapshot!(render(&connected_app(), 60, 24));
+        let rows = render_panel(60, 3, |f, area| draw_input(f, &app, area));
+        assert!(rows[0].contains(" Send to: Alice "));
+        assert!(rows[1].starts_with("│hello "));
     }
 }
