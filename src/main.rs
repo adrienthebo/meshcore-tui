@@ -25,6 +25,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 use app::App;
 use radio::{connect, run_radio_effects, setup_subscriptions};
+use theme::ThemeName;
 use ui::draw;
 use update::{update, Effect, Msg};
 
@@ -52,6 +53,10 @@ struct Args {
     /// Default channel (0 = public)
     #[arg(short, long, default_value_t = 0)]
     channel: u8,
+
+    /// Colour theme
+    #[arg(long, value_enum, default_value_t = ThemeName::Vaporwave)]
+    theme: ThemeName,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -103,6 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(args.channel);
+    app.theme = args.theme.theme();
     app.sys("MeshCore Chat — Rust TUI Client v0.1");
     app.sys("Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
 

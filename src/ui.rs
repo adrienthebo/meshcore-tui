@@ -616,6 +616,27 @@ mod tests {
     }
 
     #[test]
+    fn noise_bars_are_coloured_by_height() {
+        let theme = Theme::VAPORWAVE;
+        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR), theme.graph_low);
+        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR + NOISE_BAR_SCALE / 2), theme.graph_mid);
+        assert_eq!(noise_bar_color(&theme, NOISE_BAR_FLOOR + NOISE_BAR_SCALE), theme.graph_high);
+    }
+
+    #[test]
+    fn panels_draw_with_the_apps_theme() {
+        let mut app = connected_app();
+        app.theme = Theme::VAPORWAVE;
+        app.panel = Panel::Contacts;
+        let backend = render_panel(80, 24, |f, _| draw(f, &app));
+        let buffer = backend.buffer();
+        // Status border, then the focused contacts border, then the unfocused messages border
+        assert_eq!(buffer[(0, 0)].fg, app.theme.status_border);
+        assert_eq!(buffer[(79, 3)].fg, app.theme.focus);
+        assert_eq!(buffer[(0, 3)].fg, app.theme.messages_border);
+    }
+
+    #[test]
     fn one_db_of_change_is_visible() {
         let app = app_with_noise(&[Some(-108), Some(-107)]);
         let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, area)));

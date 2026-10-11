@@ -78,4 +78,64 @@ impl Theme {
         graph_mid: Color::Green,
         graph_high: Color::Green,
     };
+
+    /// Neon pastels on the terminal's own background; needs a truecolor terminal
+    pub const VAPORWAVE: Theme = Theme {
+        text: WHITE,
+        muted: DUSTY_VIOLET,
+        focus: HOT_PINK,
+        info: CYAN,
+        value: PALE_YELLOW,
+        good: MINT,
+        bad: CORAL,
+
+        status_border: LAVENDER,
+        messages_border: LAVENDER,
+        contacts_border: LAVENDER,
+        packets_border: LAVENDER,
+        radio_border: LAVENDER,
+        input_border: CYAN,
+
+        msg_incoming: CYAN,
+        msg_outgoing: MINT,
+        msg_channel: PALE_YELLOW,
+
+        packet_advert: HOT_PINK,
+        packet_ack: CYAN,
+        packet_sent: MINT,
+        packet_path: LAVENDER,
+
+        selected_fg: DEEP_PURPLE,
+        selected_bg: HOT_PINK,
+
+        graph_low: CYAN,
+        graph_mid: LAVENDER,
+        graph_high: HOT_PINK,
+    };
+}
+
+const HOT_PINK: Color = Color::Rgb(0xff, 0x71, 0xce);
+const LAVENDER: Color = Color::Rgb(0xb9, 0x67, 0xff);
+const CYAN: Color = Color::Rgb(0x01, 0xcd, 0xfe);
+const MINT: Color = Color::Rgb(0x05, 0xff, 0xa1);
+const PALE_YELLOW: Color = Color::Rgb(0xff, 0xfb, 0x96);
+const CORAL: Color = Color::Rgb(0xff, 0x4f, 0x81);
+const DUSTY_VIOLET: Color = Color::Rgb(0x8c, 0x7b, 0xa8);
+const WHITE: Color = Color::Rgb(0xf4, 0xf0, 0xff);
+const DEEP_PURPLE: Color = Color::Rgb(0x1a, 0x10, 0x33);
+
+/// The themes selectable with --theme
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ThemeName {
+    Vaporwave,
+    Classic,
+}
+
+impl ThemeName {
+    pub fn theme(self) -> Theme {
+        match self {
+            ThemeName::Vaporwave => Theme::VAPORWAVE,
+            ThemeName::Classic => Theme::CLASSIC,
+        }
+    }
 }
