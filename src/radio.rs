@@ -1,13 +1,14 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::{App, ChannelEntry};
-use crate::commands::Outcome;
-use crate::update::Recipient;
+use crate::commands::{run_radio_command, Outcome};
+use crate::update::{Effect, Recipient};
 use crate::text::sanitize;
 use crate::Args;
 
@@ -179,8 +180,28 @@ pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPay
     mc.start_auto_message_fetching().await;
 }
 
+/// Run radio effects one at a time in arrival order, reporting each result on `outcomes`
+pub async fn run_radio_effects(
+    mc: Arc<MeshCore>,
+    mut effects: UnboundedReceiver<Effect>,
+    outcomes: UnboundedSender<Result<Outcome, String>>,
+) {
+    while let Some(effect) = effects.recv().await {
+        let outcome = match effect {
+            Effect::Radio(cmd) => run_radio_command(&mc, cmd).await,
+            Effect::Send { to, text } => send_text(&mc, to, text).await,
+            // The main loop handles alerts itself
+            Effect::Alert => continue,
+        };
+        if outcomes.send(outcome).is_err() {
+            // The main loop has exited
+            break;
+        }
+    }
+}
+
 /// Send a chat message; the error is the text to show the user
-pub async fn send_text(mc: &MeshCore, to: Recipient, text: String) -> Result<Outcome, String> {
+async fn send_text(mc: &MeshCore, to: Recipient, text: String) -> Result<Outcome, String> {
     match to {
         Recipient::Contact(contact) => mc.commands().lock().await.send_msg(&contact, &text, None).await
             .map(|info| Outcome::DirectSent { contact, text, info })

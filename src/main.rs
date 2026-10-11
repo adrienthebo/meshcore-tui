@@ -9,6 +9,7 @@ mod ui;
 mod update;
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -17,13 +18,11 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use meshcore_rs::MeshCore;
 use ratatui::{backend::CrosstermBackend, Terminal};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedSender};
 
 use app::App;
-use commands::run_radio_command;
-use radio::{connect, send_text, setup_subscriptions};
+use radio::{connect, run_radio_effects, setup_subscriptions};
 use ui::draw;
 use update::{update, Effect, Msg};
 
@@ -60,19 +59,18 @@ fn bell() {
     print!("\x07");
 }
 
-/// Carry out the effects `update` asked for
-async fn run_effects(effects: Vec<Effect>, app: &mut App, mc: Option<&MeshCore>) {
-    for effect in effects {
-        let outcome = match (effect, mc) {
-            (Effect::Alert, _) => {
-                bell();
-                continue;
+/// Apply a message, then carry out the effects it calls for; radio work goes to the background task
+fn dispatch(app: &mut App, msg: Msg, radio: Option<&UnboundedSender<Effect>>) {
+    for effect in update(app, msg) {
+        match (effect, radio) {
+            (Effect::Alert, _) => bell(),
+            (work, Some(radio)) => {
+                if radio.send(work).is_err() {
+                    app.err("Radio task stopped");
+                }
             }
-            (Effect::Radio(cmd), Some(mc)) => run_radio_command(mc, cmd).await,
-            (Effect::Send { to, text }, Some(mc)) => send_text(mc, to, text).await,
-            (_, None) => Err("Not connected".to_string()),
-        };
-        app.apply_outcome(outcome);
+            (_, None) => app.err("Not connected"),
+        }
     }
 }
 
@@ -103,12 +101,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.sys("MeshCore Chat — Rust TUI Client v0.1");
     app.sys("Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
 
-    let mc = connect(&mut app, &args).await;
+    let mc = connect(&mut app, &args).await.map(Arc::new);
     let (radio_events_tx, mut radio_events) = mpsc::unbounded_channel();
+    let (outcomes_tx, mut outcomes) = mpsc::unbounded_channel();
+    let mut radio = None;
 
     if let Some(ref mc) = mc {
         app.sys("Ready! Type a message and press Enter.");
         setup_subscriptions(mc, radio_events_tx).await;
+        let (effects_tx, effects_rx) = mpsc::unbounded_channel();
+        tokio::spawn(run_radio_effects(Arc::clone(mc), effects_rx, outcomes_tx));
+        radio = Some(effects_tx);
     } else {
         app.sys("Offline mode — fix connection and restart.");
     }
@@ -116,16 +119,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Main loop
     loop {
         while let Ok(payload) = radio_events.try_recv() {
-            let effects = update(&mut app, Msg::Radio(payload));
-            run_effects(effects, &mut app, mc.as_ref()).await;
+            dispatch(&mut app, Msg::Radio(payload), radio.as_ref());
+        }
+        while let Ok(outcome) = outcomes.try_recv() {
+            dispatch(&mut app, Msg::EffectDone(outcome), radio.as_ref());
         }
 
         terminal.draw(|f| draw(f, &app))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let CEvent::Key(key) = event::read()? {
-                let effects = update(&mut app, Msg::Key(key));
-                run_effects(effects, &mut app, mc.as_ref()).await;
+                dispatch(&mut app, Msg::Key(key), radio.as_ref());
             }
         }
 

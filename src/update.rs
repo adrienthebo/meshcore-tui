@@ -2,12 +2,14 @@ use crossterm::event::KeyEvent;
 use meshcore_rs::events::{Contact, EventPayload};
 
 use crate::app::App;
-use crate::commands::Command;
+use crate::commands::{Command, Outcome};
 
 /// Something that happened, for `update` to apply to the app
 pub enum Msg {
     Key(KeyEvent),
     Radio(EventPayload),
+    /// The radio finished a command or send
+    EffectDone(Result<Outcome, String>),
 }
 
 /// Who an outgoing message is addressed to
@@ -39,6 +41,10 @@ pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
                 Vec::new()
             }
         }
+        Msg::EffectDone(outcome) => {
+            app.apply_outcome(outcome);
+            Vec::new()
+        }
     }
 }
 
@@ -65,6 +71,13 @@ mod tests {
         let mut app = App::new(0);
         assert!(update(&mut app, Msg::Radio(EventPayload::Ack { tag: [0; 4] })).is_empty());
         assert_eq!(app.packets.len(), 1);
+    }
+
+    #[test]
+    fn finished_radio_work_is_applied() {
+        let mut app = App::new(0);
+        assert!(update(&mut app, Msg::EffectDone(Ok(Outcome::AdvertSent))).is_empty());
+        assert_eq!(last_message(&app), "Advertisement sent");
     }
 
     #[test]
