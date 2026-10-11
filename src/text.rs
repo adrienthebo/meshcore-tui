@@ -60,9 +60,33 @@ pub fn truncate_to_width(s: &str, max_width: usize) -> String {
     result
 }
 
+/// Format seconds as days, hours, minutes and seconds, leaving out zero units (e.g. "1d4h32s")
+pub fn format_duration(secs: u32) -> String {
+    let units = [(secs / 86_400, "d"), (secs / 3_600 % 24, "h"), (secs / 60 % 60, "m"), (secs % 60, "s")];
+    let text: String = units
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, unit)| format!("{}{}", n, unit))
+        .collect();
+    if text.is_empty() {
+        "0s".to_string()
+    } else {
+        text
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durations_use_the_largest_units_and_skip_zeros() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(4), "4s");
+        assert_eq!(format_duration(2973), "49m33s");
+        assert_eq!(format_duration(3600), "1h");
+        assert_eq!(format_duration(86_400 + 4 * 3_600 + 32), "1d4h32s");
+    }
 
     // ── sanitize ─────────────────────────────────────────────────────────────
 

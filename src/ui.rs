@@ -8,7 +8,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, MsgType, Panel};
-use crate::text::{sanitize, truncate_to_width, wrap_to_width};
+use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
 
 // ── TUI Rendering ────────────────────────────────────────────────────────────
@@ -357,7 +357,14 @@ fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("{} dBm", latest.last_rssi), Style::default().fg(rssi_colour)),
         Span::styled("  SNR ", muted),
         Span::styled(format!("{:.2} dB", latest.last_snr), Style::default().fg(snr_colour)),
-        Span::styled(format!("   Air TX {}s RX {}s", latest.tx_air_secs, latest.rx_air_secs), muted),
+        Span::styled(
+            format!(
+                "   Air TX {} RX {}",
+                format_duration(latest.tx_air_secs),
+                format_duration(latest.rx_air_secs)
+            ),
+            muted,
+        ),
     ]);
     f.render_widget(Paragraph::new(footer), rows[2]);
 }
