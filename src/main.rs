@@ -1,6 +1,7 @@
 mod app;
 mod commands;
 mod input;
+mod overview;
 mod radio;
 mod stats;
 mod tab_bar;

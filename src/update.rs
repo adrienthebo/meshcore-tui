@@ -35,10 +35,25 @@ pub enum Effect {
     PollRadioStats,
 }
 
+/// A change to the App that a view asks for in response to a key
+#[derive(Debug, PartialEq)]
+pub enum Action {
+    Quit,
+    /// Send a chat message or run a slash command
+    Submit(String),
+    /// Address messages to the contact at this index
+    SelectContact(usize),
+    /// Address messages to the active channel
+    Deselect,
+}
+
 /// Apply a message to the app and what's on screen; returns the effects it calls for
 pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Key(key) => ui.handle_key(key, app).and_then(|line| app.submit(&line)).into_iter().collect(),
+        Msg::Key(key) => match ui.handle_key(key, app) {
+            Some(action) => apply_action(app, action),
+            None => Vec::new(),
+        },
         Msg::Radio(payload) => {
             if app.apply_radio_event(payload) {
                 vec![Effect::Alert]
@@ -52,6 +67,16 @@ pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
         }
         Msg::StatsPollDue => app.poll_radio_stats().into_iter().collect(),
     }
+}
+
+fn apply_action(app: &mut App, action: Action) -> Vec<Effect> {
+    match action {
+        Action::Quit => app.should_quit = true,
+        Action::Submit(line) => return app.submit(&line).into_iter().collect(),
+        Action::SelectContact(idx) => app.select_contact(idx),
+        Action::Deselect => app.selected_key = None,
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -105,6 +130,25 @@ mod tests {
         assert!(update(&mut app, &mut ui, key(KeyCode::Char('i'))).is_empty());
         let effects = update(&mut app, &mut ui, key(KeyCode::Enter));
         assert!(matches!(&effects[..], [Effect::Send { text, .. }] if text == "hi"));
-        assert_eq!(ui.overview.input.as_str(), "");
+        // The line was cleared, so Enter has nothing more to send
+        assert!(update(&mut app, &mut ui, key(KeyCode::Enter)).is_empty());
+    }
+
+    #[test]
+    fn esc_quits() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        assert!(update(&mut app, &mut ui, key(KeyCode::Esc)).is_empty());
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn contact_actions_change_the_selection() {
+        let mut app = app_with_contacts(2);
+        apply_action(&mut app, Action::SelectContact(1));
+        assert_eq!(app.selected_index(), Some(1));
+        apply_action(&mut app, Action::Deselect);
+        assert_eq!(app.selected_key, None);
+        apply_action(&mut app, Action::SelectContact(5));
+        assert_eq!(app.selected_key, None);
     }
 }

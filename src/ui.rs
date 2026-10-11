@@ -11,7 +11,8 @@ use crate::app::{App, MsgType};
 use crate::tab_bar::TabBar;
 use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
-use crate::view::{Panel, Tab, Ui};
+use crate::overview::{Overview, Panel};
+use crate::view::Ui;
 
 // ── TUI Rendering ────────────────────────────────────────────────────────────
 
@@ -26,25 +27,21 @@ pub fn draw(f: &mut Frame, app: &App, ui: &Ui) {
         ])
         .split(f.area());
 
-    draw_status(f, app, ui, chunks[0]);
+    draw_status(f, app, &ui.theme, chunks[0]);
     draw_tab_bar(f, ui, chunks[1]);
-    match ui.tab {
-        Tab::Overview => draw_overview(f, app, ui, chunks[2]),
-    }
+    ui.active_tab().draw(f, chunks[2], app, &ui.theme);
 }
 
 /// Each tab's title, numbered with the digit that shows it alongside Alt
 fn draw_tab_bar(f: &mut Frame, ui: &Ui, area: Rect) {
-    let theme = &ui.theme;
-    let titles: Vec<&str> = Tab::ALL.iter().map(|tab| tab.title()).collect();
-    let selected = Tab::ALL.iter().position(|tab| *tab == ui.tab).unwrap_or_default();
-    let bar = TabBar::new(&titles, selected)
-        .active_style(Style::default().fg(theme.focus))
-        .rule_style(Style::default().fg(theme.muted));
+    let titles: Vec<&str> = ui.tabs.iter().map(|tab| tab.title()).collect();
+    let bar = TabBar::new(&titles, ui.active)
+        .active_style(Style::default().fg(ui.theme.focus))
+        .rule_style(Style::default().fg(ui.theme.muted));
     f.render_widget(bar, area);
 }
 
-fn draw_overview(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+pub fn draw_overview(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -59,13 +56,13 @@ fn draw_overview(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
         .constraints([Constraint::Min(40), Constraint::Length(50)])
         .split(chunks[1]);
 
-    draw_main(f, app, ui, chunks[0]);
-    draw_packets(f, app, ui, diagnostics[0]);
-    draw_radio(f, app, ui, diagnostics[1]);
-    draw_input(f, app, ui, chunks[2]);
+    draw_main(f, app, overview, theme, chunks[0]);
+    draw_packets(f, app, overview, theme, diagnostics[0]);
+    draw_radio(f, app, theme, diagnostics[1]);
+    draw_input(f, app, overview, theme, chunks[2]);
 }
 
-fn draw_status(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+fn draw_status(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let freq_info = app
         .self_info
         .as_ref()
@@ -80,7 +77,6 @@ fn draw_status(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
         })
         .unwrap_or_default();
 
-    let theme = &ui.theme;
     let spans = vec![
         Span::styled("Port: ", Style::default().fg(theme.text)),
         Span::styled(&app.port_info, Style::default().fg(theme.info)),
@@ -109,19 +105,18 @@ fn draw_status(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
     f.render_widget(w, area);
 }
 
-fn draw_main(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+fn draw_main(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(40), Constraint::Length(30)])
         .split(area);
 
-    draw_messages(f, app, ui, chunks[0]);
-    draw_contacts(f, app, ui, chunks[1]);
+    draw_messages(f, app, overview, theme, chunks[0]);
+    draw_contacts(f, app, overview, theme, chunks[1]);
 }
 
-fn draw_messages(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+fn draw_messages(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let panel_width = (area.width as usize).saturating_sub(2); // border
-    let theme = &ui.theme;
     let items: Vec<ListItem> = app
         .messages
         .iter()
@@ -197,7 +192,7 @@ fn draw_messages(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
     }
     let visible_items: Vec<ListItem> = items.into_iter().skip(start_idx).collect();
 
-    let bc = if ui.overview.focus ==Panel::Messages {
+    let bc = if overview.focus ==Panel::Messages {
         theme.focus
     } else {
         theme.messages_border
@@ -207,10 +202,9 @@ fn draw_messages(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
     f.render_widget(msg_w, area);
 }
 
-fn draw_contacts(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+fn draw_contacts(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
     let selected = app.selected_index();
-    let theme = &ui.theme;
     let citems: Vec<ListItem> = app
         .contacts
         .iter()
@@ -246,7 +240,7 @@ fn draw_contacts(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
         })
         .collect();
 
-    let cc = if ui.overview.focus ==Panel::Contacts {
+    let cc = if overview.focus ==Panel::Contacts {
         theme.focus
     } else {
         theme.contacts_border
@@ -255,9 +249,8 @@ fn draw_contacts(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
     f.render_widget(c_w, area);
 }
 
-fn draw_packets(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
+fn draw_packets(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let visible = (area.height as usize).saturating_sub(2);
-    let theme = &ui.theme;
     let items: Vec<ListItem> = app
         .packets
         .iter()
@@ -301,7 +294,7 @@ fn draw_packets(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
         })
         .collect();
 
-    let pc = if ui.overview.focus ==Panel::Packets {
+    let pc = if overview.focus ==Panel::Packets {
         theme.focus
     } else {
         theme.packets_border
@@ -329,8 +322,7 @@ fn noise_bar(dbm: i16, (low, high): (i16, i16)) -> u64 {
     NOISE_BAR_FLOOR + above_low * NOISE_BAR_SCALE / (high - low) as u64
 }
 
-fn draw_radio(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
-    let theme = &ui.theme;
+fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let block = panel(theme, " Radio ", theme.radio_border);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -419,17 +411,16 @@ fn noise_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -90.0, -120.0)
 }
 
-fn draw_input(f: &mut Frame, app: &App, ui: &Ui, area: Rect) {
-    let theme = &ui.theme;
+fn draw_input(f: &mut Frame, app: &App, overview: &Overview, theme: &Theme, area: Rect) {
     let title = format!(
         " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
         app.target_label()
     );
-    let w = Paragraph::new(ui.overview.input.as_str())
+    let w = Paragraph::new(overview.input.as_str())
         .style(Style::default().fg(theme.text))
         .block(panel(theme, title, theme.input_border));
     f.render_widget(w, area);
-    f.set_cursor_position((area.x + ui.overview.input.cursor_column() + 1, area.y + 1));
+    f.set_cursor_position((area.x + overview.input.cursor_column() + 1, area.y + 1));
 }
 
 /// A panel with a rounded border and a bold title
@@ -540,20 +531,20 @@ mod tests {
 
     #[test]
     fn status_shows_connection_state() {
-        let connected = rows(&render_panel(120, 3, |f, area| draw_status(f, &connected_app(), &test_ui(), area)));
+        let connected = rows(&render_panel(120, 3, |f, area| draw_status(f, &connected_app(), &Theme::CLASSIC, area)));
         assert_eq!(rows_containing(&connected, "● Connected"), 1);
-        let offline = rows(&render_panel(120, 3, |f, area| draw_status(f, &App::new(0), &test_ui(), area)));
+        let offline = rows(&render_panel(120, 3, |f, area| draw_status(f, &App::new(0), &Theme::CLASSIC, area)));
         assert_eq!(rows_containing(&offline, "○ Disconnected"), 1);
     }
 
     #[test]
     fn status_bar() {
-        insta::assert_snapshot!(render_panel(120, 3, |f, area| draw_status(f, &connected_app(), &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(120, 3, |f, area| draw_status(f, &connected_app(), &Theme::CLASSIC, area)));
     }
 
     #[test]
     fn messages_title_shows_device_and_target() {
-        let rows = rows(&render_panel(60, 5, |f, area| draw_messages(f, &connected_app(), &test_ui(), area)));
+        let rows = rows(&render_panel(60, 5, |f, area| draw_messages(f, &connected_app(), &Overview::default(), &Theme::CLASSIC, area)));
         assert!(rows[0].contains(" Base — Public "));
     }
 
@@ -564,7 +555,7 @@ mod tests {
             .map(|i| chat_message("SYS", &format!("message {}", i), MsgType::System))
             .collect();
         // 8 rows minus borders leaves 6 visible messages: 24..=29
-        let rows = rows(&render_panel(60, 8, |f, area| draw_messages(f, &app, &test_ui(), area)));
+        let rows = rows(&render_panel(60, 8, |f, area| draw_messages(f, &app, &Overview::default(), &Theme::CLASSIC, area)));
         assert_eq!(rows_containing(&rows, "message 29"), 1);
         assert_eq!(rows_containing(&rows, "message 24"), 1);
         assert_eq!(rows_containing(&rows, "message 23"), 0);
@@ -572,7 +563,7 @@ mod tests {
 
     #[test]
     fn messages_tag_each_type() {
-        insta::assert_snapshot!(render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(60, 7, |f, area| draw_messages(f, &connected_app(), &Overview::default(), &Theme::CLASSIC, area)));
     }
 
     #[test]
@@ -580,12 +571,12 @@ mod tests {
         let mut app = App::new(0);
         app.messages = vec![chat_message("Alice", "abcdefghijklmnopqrstuvwxyz0123456789", MsgType::Incoming)];
         // 38 columns inside the border; the 22-column prefix leaves 16 for text
-        insta::assert_snapshot!(render_panel(40, 6, |f, area| draw_messages(f, &app, &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(40, 6, |f, area| draw_messages(f, &app, &Overview::default(), &Theme::CLASSIC, area)));
     }
 
     #[test]
     fn contacts_title_counts_contacts() {
-        let rows = rows(&render_panel(30, 5, |f, area| draw_contacts(f, &connected_app(), &test_ui(), area)));
+        let rows = rows(&render_panel(30, 5, |f, area| draw_contacts(f, &connected_app(), &Overview::default(), &Theme::CLASSIC, area)));
         assert!(rows[0].contains(" Contacts (2) "));
     }
 
@@ -593,7 +584,7 @@ mod tests {
     fn contacts_with_selection_and_truncation() {
         let mut app = connected_app();
         app.select_contact(0);
-        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(f, &app, &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(f, &app, &Overview::default(), &Theme::CLASSIC, area)));
     }
 
     #[test]
@@ -601,7 +592,7 @@ mod tests {
         let mut app = App::new(0);
         app.packets = (0..10).map(|i| packet("ACK", 0, &format!("packet {}", i))).collect();
         // 5 rows minus borders leaves 3 visible packets: 7..=9
-        let rows = rows(&render_panel(60, 5, |f, area| draw_packets(f, &app, &test_ui(), area)));
+        let rows = rows(&render_panel(60, 5, |f, area| draw_packets(f, &app, &Overview::default(), &Theme::CLASSIC, area)));
         assert!(rows[1].contains("packet 7"));
         assert!(rows[3].contains("packet 9"));
         assert_eq!(rows_containing(&rows, "packet 6"), 0);
@@ -614,18 +605,18 @@ mod tests {
         heard.rssi = -92;
         heard.snr = 5.25;
         app.packets = vec![packet("ACK", 0, "no signal"), heard];
-        insta::assert_snapshot!(render_panel(60, 4, |f, area| draw_packets(f, &app, &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(60, 4, |f, area| draw_packets(f, &app, &Overview::default(), &Theme::CLASSIC, area)));
     }
 
     #[test]
     fn input_shows_text_and_send_target() {
         let mut app = connected_app();
         app.select_contact(0);
-        let mut ui = test_ui();
+        let mut overview = Overview::default();
         for c in "hello".chars() {
-            ui.overview.input.insert(c);
+            overview.input.insert(c);
         }
-        insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, &ui, area)));
+        insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, &overview, &Theme::CLASSIC, area)));
     }
 
     // ── Radio panel ──────────────────────────────────────────────────────────
@@ -642,7 +633,7 @@ mod tests {
     #[test]
     fn radio_waits_for_the_first_reading() {
         let app = app_with_noise(&[None]);
-        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &test_ui(), area)));
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area)));
         assert!(rows[1].contains("waiting for radio stats…"));
     }
 
@@ -680,8 +671,8 @@ mod tests {
     #[test]
     fn radio_values_are_coloured_by_quality() {
         let app = app_with_noise(&[Some(-120), Some(-90)]);
-        let ui = Ui::new(Theme::VAPORWAVE);
-        let backend = render_panel(50, 7, |f, area| draw_radio(f, &app, &ui, area));
+        let theme = Theme::VAPORWAVE;
+        let backend = render_panel(50, 7, |f, area| draw_radio(f, &app, &theme, area));
         let buffer = backend.buffer();
         let colour_of = |row: u16, text: &str| {
             let line: String = (0..50).map(|x| buffer[(x, row)].symbol().to_string()).collect();
@@ -689,18 +680,21 @@ mod tests {
             buffer[(line[..x].chars().count() as u16, row)].fg
         };
         // Current noise -90 dBm is poor; the test RSSI of -90 dBm is fair
-        assert_eq!(colour_of(1, "-90 dBm"), ui.theme.quality_poor);
-        assert_eq!(colour_of(5, "-90 dBm"), ui.theme.quality_fair);
+        assert_eq!(colour_of(1, "-90 dBm"), theme.quality_poor);
+        assert_eq!(colour_of(5, "-90 dBm"), theme.quality_fair);
         // Bars, newest rightmost: -90 is poor, -120 is good
-        assert_eq!(buffer[(48, 4)].fg, ui.theme.quality_poor);
-        assert_eq!(buffer[(47, 4)].fg, ui.theme.quality_good);
+        assert_eq!(buffer[(48, 4)].fg, theme.quality_poor);
+        assert_eq!(buffer[(47, 4)].fg, theme.quality_good);
     }
 
     #[test]
     fn panels_draw_with_the_uis_theme() {
         let app = connected_app();
         let mut ui = Ui::new(Theme::VAPORWAVE);
-        ui.overview.focus = Panel::Contacts;
+        ui.tabs[0] = Box::new(Overview {
+            focus: Panel::Contacts,
+            ..Overview::default()
+        });
         let backend = render_panel(80, 24, |f, _| draw(f, &app, &ui));
         let buffer = backend.buffer();
         // Status border, the current tab's outline over the muted rule, then the
@@ -716,8 +710,7 @@ mod tests {
     #[test]
     fn connection_indicator_uses_the_connected_colour() {
         let app = connected_app();
-        let ui = Ui::new(Theme::VAPORWAVE);
-        let backend = render_panel(120, 3, |f, area| draw_status(f, &app, &ui, area));
+        let backend = render_panel(120, 3, |f, area| draw_status(f, &app, &Theme::VAPORWAVE, area));
         let indicator = backend.buffer().content().iter().find(|c| c.symbol() == "●").unwrap();
         assert_eq!(indicator.fg, Color::Rgb(0x26, 0xff, 0x4e));
     }
@@ -726,8 +719,7 @@ mod tests {
     fn panel_titles_are_bold_in_the_title_colour() {
         let app = connected_app();
         for theme in [Theme::VAPORWAVE, Theme::CLASSIC] {
-            let ui = Ui::new(theme);
-            let backend = render_panel(60, 3, |f, area| draw_status(f, &app, &ui, area));
+            let backend = render_panel(60, 3, |f, area| draw_status(f, &app, &theme, area));
             // The "S" of " Status "
             let cell = &backend.buffer()[(2, 0)];
             assert_eq!(cell.symbol(), "S");
@@ -739,7 +731,7 @@ mod tests {
     #[test]
     fn one_db_of_change_is_visible() {
         let app = app_with_noise(&[Some(-108), Some(-107)]);
-        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &test_ui(), area)));
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area)));
         let column = |x: usize| -> String { rows[2..5].iter().map(|r| r.chars().nth(x).unwrap()).collect() };
         assert_ne!(column(47), column(48));
     }
@@ -747,13 +739,13 @@ mod tests {
     #[test]
     fn radio_header_shows_range_of_visible_readings() {
         let app = app_with_noise(&[Some(-90), Some(-118), None, Some(-104)]);
-        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &test_ui(), area)));
+        let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area)));
         assert!(rows[1].contains("Noise -104 dBm  (min -118 / max -90)"));
     }
 
     #[test]
     fn radio_panel_graphs_newest_reading_rightmost() {
         let app = app_with_noise(&[Some(-120), Some(-110), Some(-100), None, Some(-90), Some(-80)]);
-        insta::assert_snapshot!(render_panel(50, 7, |f, area| draw_radio(f, &app, &test_ui(), area)));
+        insta::assert_snapshot!(render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area)));
     }
 }
