@@ -6,6 +6,7 @@ mod radio;
 mod test_support;
 mod text;
 mod ui;
+mod update;
 
 use std::io;
 use std::time::Duration;
@@ -16,13 +17,15 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use meshcore_rs::MeshCore;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
 use app::App;
 use commands::handle_command;
-use radio::{apply_queued_events, connect, send_message, setup_subscriptions};
+use radio::{connect, send_message, setup_subscriptions};
 use ui::draw;
+use update::{update, Effect, Msg};
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -55,6 +58,24 @@ struct Args {
 /// Ring the terminal bell
 fn bell() {
     print!("\x07");
+}
+
+/// Carry out the effects `update` asked for
+async fn run_effects(effects: Vec<Effect>, app: &mut App, mc: Option<&MeshCore>) {
+    for effect in effects {
+        match effect {
+            Effect::Alert => bell(),
+            Effect::Submit(text) => {
+                if text.starts_with('/') {
+                    handle_command(&text, app, mc).await;
+                } else if let Some(mc) = mc {
+                    send_message(mc, app, &text).await;
+                } else {
+                    app.err("Not connected");
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -96,23 +117,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main loop
     loop {
-        if apply_queued_events(&mut app, &mut radio_events) {
-            bell();
+        while let Ok(payload) = radio_events.try_recv() {
+            let effects = update(&mut app, Msg::Radio(payload));
+            run_effects(effects, &mut app, mc.as_ref()).await;
         }
 
         terminal.draw(|f| draw(f, &app))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let CEvent::Key(key) = event::read()? {
-                if let Some(text) = app.handle_key(key) {
-                    if text.starts_with('/') {
-                        handle_command(&text, &mut app, mc.as_ref()).await;
-                    } else if let Some(ref mc) = mc {
-                        send_message(mc, &mut app, &text).await;
-                    } else {
-                        app.err("Not connected");
-                    }
-                }
+                let effects = update(&mut app, Msg::Key(key));
+                run_effects(effects, &mut app, mc.as_ref()).await;
             }
         }
 

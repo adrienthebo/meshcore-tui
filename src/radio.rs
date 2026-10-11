@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::{App, ChannelEntry};
 use crate::text::sanitize;
@@ -177,15 +177,6 @@ pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPay
     mc.start_auto_message_fetching().await;
 }
 
-/// Apply queued radio events to the app; returns true if a chat message arrived
-pub fn apply_queued_events(app: &mut App, events: &mut UnboundedReceiver<EventPayload>) -> bool {
-    let mut message_arrived = false;
-    while let Ok(payload) = events.try_recv() {
-        message_arrived |= app.apply_radio_event(payload);
-    }
-    message_arrived
-}
-
 pub async fn send_message(mc: &MeshCore, app: &mut App, text: &str) {
     let contact = app.selected_contact.and_then(|idx| app.contacts.get(idx).cloned());
     let channel = app.active_channel;
@@ -208,40 +199,5 @@ pub async fn send_message(mc: &MeshCore, app: &mut App, text: &str) {
             Ok(_) => app.on_channel_sent(channel, text),
             Err(e) => app.err(&format!("Channel send failed: {}", e)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::*;
-    use tokio::sync::mpsc;
-
-    #[test]
-    fn queued_events_are_applied_in_arrival_order() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tx.send(EventPayload::ChannelMessage(channel_message(0, "Alice: first"))).unwrap();
-        tx.send(EventPayload::ChannelMessage(channel_message(0, "Bob: second"))).unwrap();
-        let mut app = App::new(0);
-        assert!(apply_queued_events(&mut app, &mut rx));
-        let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
-        assert_eq!(texts, vec!["first", "second"]);
-    }
-
-    #[test]
-    fn queued_events_without_chat_messages_do_not_alert() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tx.send(EventPayload::Ack { tag: [0; 4] }).unwrap();
-        let mut app = App::new(0);
-        assert!(!apply_queued_events(&mut app, &mut rx));
-        assert_eq!(app.packets.len(), 1);
-    }
-
-    #[test]
-    fn empty_queue_changes_nothing() {
-        let (_tx, mut rx) = mpsc::unbounded_channel();
-        let mut app = App::new(0);
-        assert!(!apply_queued_events(&mut app, &mut rx));
-        assert!(app.messages.is_empty());
     }
 }
