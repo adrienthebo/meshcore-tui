@@ -30,6 +30,7 @@ use radio::{connect, run_radio_effects, setup_subscriptions};
 use theme::ThemeName;
 use ui::draw;
 use update::{update, Effect, Msg};
+use view::Ui;
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -72,8 +73,8 @@ fn bell() {
 }
 
 /// Apply a message, then carry out the effects it calls for; radio work goes to the background task
-fn dispatch(app: &mut App, msg: Msg, radio: Option<&UnboundedSender<Effect>>) {
-    for effect in update(app, msg) {
+fn dispatch(app: &mut App, ui: &mut Ui, msg: Msg, radio: Option<&UnboundedSender<Effect>>) {
+    for effect in update(app, ui, msg) {
         match (effect, radio) {
             (Effect::Alert, _) => bell(),
             (work, Some(radio)) => {
@@ -110,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(args.channel);
-    app.theme = args.theme.theme();
+    let mut ui = Ui::new(args.theme.theme());
     app.sys("MeshCore Chat — Rust TUI Client v0.1");
     app.sys("Alt+1=Overview  Tab=panel  ↑↓=contact  F1=deselect  Enter=send  /help=commands  Esc=quit");
 
@@ -133,21 +134,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut next_stats_poll = Instant::now();
     loop {
         while let Ok(payload) = radio_events.try_recv() {
-            dispatch(&mut app, Msg::Radio(payload), radio.as_ref());
+            dispatch(&mut app, &mut ui, Msg::Radio(payload), radio.as_ref());
         }
         while let Ok(outcome) = outcomes.try_recv() {
-            dispatch(&mut app, Msg::EffectDone(outcome), radio.as_ref());
+            dispatch(&mut app, &mut ui, Msg::EffectDone(outcome), radio.as_ref());
         }
         if Instant::now() >= next_stats_poll {
             next_stats_poll = Instant::now() + STATS_POLL_INTERVAL;
-            dispatch(&mut app, Msg::StatsPollDue, radio.as_ref());
+            dispatch(&mut app, &mut ui, Msg::StatsPollDue, radio.as_ref());
         }
 
-        terminal.draw(|f| draw(f, &app))?;
+        terminal.draw(|f| draw(f, &app, &ui))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let CEvent::Key(key) = event::read()? {
-                dispatch(&mut app, Msg::Key(key), radio.as_ref());
+                dispatch(&mut app, &mut ui, Msg::Key(key), radio.as_ref());
             }
         }
 

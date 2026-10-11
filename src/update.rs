@@ -3,6 +3,7 @@ use meshcore_rs::events::{Contact, EventPayload};
 
 use crate::app::App;
 use crate::commands::{Command, Outcome};
+use crate::view::Ui;
 
 /// Something that happened, for `update` to apply to the app
 pub enum Msg {
@@ -34,10 +35,10 @@ pub enum Effect {
     PollRadioStats,
 }
 
-/// Apply a message to the app; returns the effects it calls for
-pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
+/// Apply a message to the app and what's on screen; returns the effects it calls for
+pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Key(key) => app.handle_key(key).and_then(|line| app.submit(&line)).into_iter().collect(),
+        Msg::Key(key) => ui.handle_key(key, app).and_then(|line| app.submit(&line)).into_iter().collect(),
         Msg::Radio(payload) => {
             if app.apply_radio_event(payload) {
                 vec![Effect::Alert]
@@ -65,45 +66,45 @@ mod tests {
 
     #[test]
     fn chat_message_alerts() {
-        let mut app = App::new(0);
+        let (mut app, mut ui) = (App::new(0), test_ui());
         let msg = Msg::Radio(EventPayload::ChannelMessage(channel_message(0, "Bob: hi")));
-        assert!(matches!(update(&mut app, msg)[..], [Effect::Alert]));
+        assert!(matches!(update(&mut app, &mut ui, msg)[..], [Effect::Alert]));
         assert_eq!(last_message(&app), "hi");
     }
 
     #[test]
     fn other_radio_events_do_not_alert() {
-        let mut app = App::new(0);
-        assert!(update(&mut app, Msg::Radio(EventPayload::Ack { tag: [0; 4] })).is_empty());
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        assert!(update(&mut app, &mut ui, Msg::Radio(EventPayload::Ack { tag: [0; 4] })).is_empty());
         assert_eq!(app.packets.len(), 1);
     }
 
     #[test]
     fn finished_radio_work_is_applied() {
-        let mut app = App::new(0);
-        assert!(update(&mut app, Msg::EffectDone(Ok(Outcome::AdvertSent))).is_empty());
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        assert!(update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::AdvertSent))).is_empty());
         assert_eq!(last_message(&app), "Advertisement sent");
     }
 
     #[test]
     fn stats_poll_asks_the_radio_only_when_connected_and_idle() {
-        let mut app = App::new(0);
-        assert!(update(&mut app, Msg::StatsPollDue).is_empty());
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        assert!(update(&mut app, &mut ui, Msg::StatsPollDue).is_empty());
         app.connected = true;
-        assert!(matches!(update(&mut app, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
-        assert!(update(&mut app, Msg::StatsPollDue).is_empty());
-        update(&mut app, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
-        assert!(matches!(update(&mut app, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        assert!(update(&mut app, &mut ui, Msg::StatsPollDue).is_empty());
+        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
+        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
     }
 
     #[test]
     fn enter_submits_the_input_line() {
-        let mut app = App::new(0);
+        let (mut app, mut ui) = (App::new(0), test_ui());
         app.connected = true;
-        assert!(update(&mut app, key(KeyCode::Char('h'))).is_empty());
-        assert!(update(&mut app, key(KeyCode::Char('i'))).is_empty());
-        let effects = update(&mut app, key(KeyCode::Enter));
+        assert!(update(&mut app, &mut ui, key(KeyCode::Char('h'))).is_empty());
+        assert!(update(&mut app, &mut ui, key(KeyCode::Char('i'))).is_empty());
+        let effects = update(&mut app, &mut ui, key(KeyCode::Enter));
         assert!(matches!(&effects[..], [Effect::Send { text, .. }] if text == "hi"));
-        assert_eq!(app.overview.input.as_str(), "");
+        assert_eq!(ui.overview.input.as_str(), "");
     }
 }

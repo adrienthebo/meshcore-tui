@@ -1,6 +1,8 @@
 use meshcore_rs::events::{ChannelMessage, Contact, ContactMessage, RadioStatsData};
 
 use crate::app::{App, ChannelEntry};
+use crate::theme::Theme;
+use crate::view::Ui;
 
 pub fn contact_message(prefix: [u8; 6], text: &str) -> ContactMessage {
     ContactMessage {
@@ -69,4 +71,9 @@ pub fn app_with_contacts(n: u8) -> App {
 
 pub fn last_message(app: &App) -> &str {
     &app.messages.last().expect("no messages").text
+}
+
+/// The UI in the classic theme, showing the Overview
+pub fn test_ui() -> Ui {
+    Ui::new(Theme::CLASSIC)
 }

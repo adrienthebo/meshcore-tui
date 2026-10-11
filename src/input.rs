@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::view::{Panel, Tab};
+use crate::view::{Panel, Tab, Ui};
 
 /// Single-line text input with a cursor measured in chars
 #[derive(Debug, Default)]
@@ -76,14 +76,14 @@ impl InputLine {
     }
 }
 
-impl App {
+impl Ui {
     /// Apply a key press; keys every tab shares come first, the rest go to the
     /// tab on screen. Returns the input line when Enter submits it.
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<String> {
+    pub fn handle_key(&mut self, key: KeyEvent, app: &mut App) -> Option<String> {
         match key.code {
-            KeyCode::Esc => self.should_quit = true,
+            KeyCode::Esc => app.should_quit = true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.should_quit = true;
+                app.should_quit = true;
             }
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) && c.is_ascii_digit() => {
                 if let Some(tab) = Tab::for_digit(c) {
@@ -92,7 +92,7 @@ impl App {
             }
             _ => {
                 return match self.tab {
-                    Tab::Overview => self.handle_overview_key(key),
+                    Tab::Overview => self.handle_overview_key(key, app),
                 }
             }
         }
@@ -100,7 +100,7 @@ impl App {
     }
 
     /// Overview keys: edit and submit the input line, move focus between panels, select contacts
-    fn handle_overview_key(&mut self, key: KeyEvent) -> Option<String> {
+    fn handle_overview_key(&mut self, key: KeyEvent, app: &mut App) -> Option<String> {
         let input = &mut self.overview.input;
         match key.code {
             KeyCode::Enter if !input.is_empty() => return Some(input.take()),
@@ -118,15 +118,15 @@ impl App {
                 };
             }
             KeyCode::Up if self.overview.focus == Panel::Contacts => {
-                let idx = self.selected_index().map_or(0, |s| s.saturating_sub(1));
-                self.select_contact(idx);
+                let idx = app.selected_index().map_or(0, |s| s.saturating_sub(1));
+                app.select_contact(idx);
             }
             KeyCode::Down if self.overview.focus == Panel::Contacts => {
-                let last = self.contacts.len().saturating_sub(1);
-                let idx = self.selected_index().map_or(0, |s| (s + 1).min(last));
-                self.select_contact(idx);
+                let last = app.contacts.len().saturating_sub(1);
+                let idx = app.selected_index().map_or(0, |s| (s + 1).min(last));
+                app.select_contact(idx);
             }
-            KeyCode::F(1) => self.selected_key = None,
+            KeyCode::F(1) => app.selected_key = None,
             _ => {}
         }
         None
@@ -222,111 +222,110 @@ mod tests {
 
     // ── Key handling ─────────────────────────────────────────────────────────
 
-    fn press(app: &mut App, code: KeyCode) -> Option<String> {
-        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+    fn press(ui: &mut Ui, app: &mut App, code: KeyCode) -> Option<String> {
+        ui.handle_key(KeyEvent::new(code, KeyModifiers::NONE), app)
     }
-
 
     #[test]
     fn esc_quits() {
-        let mut app = App::new(0);
-        press(&mut app, KeyCode::Esc);
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        press(&mut ui, &mut app, KeyCode::Esc);
         assert!(app.should_quit);
     }
 
     #[test]
     fn ctrl_c_quits_without_typing() {
-        let mut app = App::new(0);
-        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        ui.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), &mut app);
         assert!(app.should_quit);
-        assert!(app.overview.input.is_empty());
+        assert!(ui.overview.input.is_empty());
     }
 
     #[test]
     fn alt_digits_switch_tabs_without_typing() {
-        let mut app = App::new(0);
-        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
-        app.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::ALT));
-        assert_eq!(app.tab, Tab::Overview);
-        assert!(app.overview.input.is_empty());
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        ui.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT), &mut app);
+        ui.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::ALT), &mut app);
+        assert_eq!(ui.tab, Tab::Overview);
+        assert!(ui.overview.input.is_empty());
     }
 
     #[test]
     fn typing_edits_the_input_line() {
-        let mut app = App::new(0);
+        let (mut ui, mut app) = (test_ui(), App::new(0));
         for c in "hi!".chars() {
-            press(&mut app, KeyCode::Char(c));
+            press(&mut ui, &mut app, KeyCode::Char(c));
         }
-        press(&mut app, KeyCode::Backspace);
-        press(&mut app, KeyCode::Home);
-        press(&mut app, KeyCode::Char('>'));
-        assert_eq!(app.overview.input.as_str(), ">hi");
+        press(&mut ui, &mut app, KeyCode::Backspace);
+        press(&mut ui, &mut app, KeyCode::Home);
+        press(&mut ui, &mut app, KeyCode::Char('>'));
+        assert_eq!(ui.overview.input.as_str(), ">hi");
     }
 
     #[test]
     fn enter_submits_and_clears_input() {
-        let mut app = App::new(0);
-        press(&mut app, KeyCode::Char('x'));
-        assert_eq!(press(&mut app, KeyCode::Enter), Some("x".to_string()));
-        assert!(app.overview.input.is_empty());
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        press(&mut ui, &mut app, KeyCode::Char('x'));
+        assert_eq!(press(&mut ui, &mut app, KeyCode::Enter), Some("x".to_string()));
+        assert!(ui.overview.input.is_empty());
     }
 
     #[test]
     fn enter_on_empty_input_submits_nothing() {
-        assert_eq!(press(&mut App::new(0), KeyCode::Enter), None);
+        assert_eq!(press(&mut test_ui(), &mut App::new(0), KeyCode::Enter), None);
     }
 
     #[test]
     fn tab_cycles_panels() {
-        let mut app = App::new(0);
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.overview.focus, Panel::Contacts);
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.overview.focus, Panel::Packets);
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.overview.focus, Panel::Messages);
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        press(&mut ui, &mut app, KeyCode::Tab);
+        assert_eq!(ui.overview.focus, Panel::Contacts);
+        press(&mut ui, &mut app, KeyCode::Tab);
+        assert_eq!(ui.overview.focus, Panel::Packets);
+        press(&mut ui, &mut app, KeyCode::Tab);
+        assert_eq!(ui.overview.focus, Panel::Messages);
     }
 
     #[test]
     fn arrows_select_contacts_only_in_contacts_panel() {
-        let mut app = app_with_contacts(3);
-        press(&mut app, KeyCode::Down);
+        let (mut ui, mut app) = (test_ui(), app_with_contacts(3));
+        press(&mut ui, &mut app, KeyCode::Down);
         assert_eq!(app.selected_index(), None);
-        app.overview.focus = Panel::Contacts;
-        press(&mut app, KeyCode::Down);
+        ui.overview.focus = Panel::Contacts;
+        press(&mut ui, &mut app, KeyCode::Down);
         assert_eq!(app.selected_index(), Some(0));
-        press(&mut app, KeyCode::Down);
-        press(&mut app, KeyCode::Down);
-        press(&mut app, KeyCode::Down);
+        press(&mut ui, &mut app, KeyCode::Down);
+        press(&mut ui, &mut app, KeyCode::Down);
+        press(&mut ui, &mut app, KeyCode::Down);
         assert_eq!(app.selected_index(), Some(2));
-        press(&mut app, KeyCode::Up);
-        press(&mut app, KeyCode::Up);
-        press(&mut app, KeyCode::Up);
+        press(&mut ui, &mut app, KeyCode::Up);
+        press(&mut ui, &mut app, KeyCode::Up);
+        press(&mut ui, &mut app, KeyCode::Up);
         assert_eq!(app.selected_index(), Some(0));
     }
 
     #[test]
     fn up_with_no_selection_selects_first_contact() {
-        let mut app = app_with_contacts(2);
-        app.overview.focus = Panel::Contacts;
-        press(&mut app, KeyCode::Up);
+        let (mut ui, mut app) = (test_ui(), app_with_contacts(2));
+        ui.overview.focus = Panel::Contacts;
+        press(&mut ui, &mut app, KeyCode::Up);
         assert_eq!(app.selected_index(), Some(0));
     }
 
     #[test]
     fn arrows_with_no_contacts_select_nothing() {
-        let mut app = App::new(0);
-        app.overview.focus = Panel::Contacts;
-        press(&mut app, KeyCode::Down);
-        press(&mut app, KeyCode::Up);
+        let (mut ui, mut app) = (test_ui(), App::new(0));
+        ui.overview.focus = Panel::Contacts;
+        press(&mut ui, &mut app, KeyCode::Down);
+        press(&mut ui, &mut app, KeyCode::Up);
         assert_eq!(app.selected_key, None);
     }
 
     #[test]
     fn f1_clears_contact_selection() {
-        let mut app = app_with_contacts(1);
+        let (mut ui, mut app) = (test_ui(), app_with_contacts(1));
         app.select_contact(0);
-        press(&mut app, KeyCode::F(1));
+        press(&mut ui, &mut app, KeyCode::F(1));
         assert_eq!(app.selected_key, None);
     }
 }

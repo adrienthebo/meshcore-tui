@@ -8,9 +8,7 @@ use meshcore_rs::events::{
 
 use crate::stats::RadioStats;
 use crate::text::sanitize;
-use crate::theme::Theme;
 use crate::update::Effect;
-use crate::view::{Overview, Tab};
 
 /// Stored channel info
 #[derive(Clone, Debug)]
@@ -49,9 +47,6 @@ pub struct PacketLogEntry {
 }
 
 pub struct App {
-    /// The view on screen
-    pub tab: Tab,
-    pub overview: Overview,
     pub messages: Vec<ChatMessage>,
     pub contacts: Vec<Contact>,
     pub channels: HashMap<u8, ChannelEntry>,
@@ -68,15 +63,12 @@ pub struct App {
     pub tx_count: u32,
     pub connected: bool,
     pub radio_stats: RadioStats,
-    pub theme: Theme,
     pub should_quit: bool,
 }
 
 impl App {
     pub fn new(channel: u8) -> Self {
         Self {
-            tab: Tab::Overview,
-            overview: Overview::default(),
             messages: Vec::new(),
             contacts: Vec::new(),
             channels: HashMap::new(),
@@ -91,7 +83,6 @@ impl App {
             tx_count: 0,
             connected: false,
             radio_stats: RadioStats::default(),
-            theme: Theme::CLASSIC,
             should_quit: false,
         }
     }

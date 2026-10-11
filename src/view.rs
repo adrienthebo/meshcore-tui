@@ -1,4 +1,23 @@
 use crate::input::InputLine;
+use crate::theme::Theme;
+
+/// What's on screen and how it looks; the radio, contacts and messages are on App
+pub struct Ui {
+    /// The view on screen
+    pub tab: Tab,
+    pub overview: Overview,
+    pub theme: Theme,
+}
+
+impl Ui {
+    pub fn new(theme: Theme) -> Self {
+        Self {
+            tab: Tab::Overview,
+            overview: Overview::default(),
+            theme,
+        }
+    }
+}
 
 /// The views the app can show; app state stays on App whichever one is showing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
