@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -76,12 +76,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         ),
     ];
 
-    let w = Paragraph::new(Line::from(spans)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Status ")
-            .border_style(Style::default().fg(theme.status_border)),
-    );
+    let w = Paragraph::new(Line::from(spans)).block(panel(theme, " Status ", theme.status_border));
     f.render_widget(w, area);
 }
 
@@ -178,12 +173,8 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     } else {
         theme.messages_border
     };
-    let msg_w = List::new(visible_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} — {} ", app.device_name(), app.target_label()))
-            .border_style(Style::default().fg(bc)),
-    );
+    let title = format!(" {} — {} ", app.device_name(), app.target_label());
+    let msg_w = List::new(visible_items).block(panel(theme, title, bc));
     f.render_widget(msg_w, area);
 }
 
@@ -231,12 +222,7 @@ fn draw_contacts(f: &mut Frame, app: &App, area: Rect) {
     } else {
         theme.contacts_border
     };
-    let c_w = List::new(citems).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Contacts ({}) ", app.contacts.len()))
-            .border_style(Style::default().fg(cc)),
-    );
+    let c_w = List::new(citems).block(panel(theme, format!(" Contacts ({}) ", app.contacts.len()), cc));
     f.render_widget(c_w, area);
 }
 
@@ -291,12 +277,7 @@ fn draw_packets(f: &mut Frame, app: &App, area: Rect) {
     } else {
         theme.packets_border
     };
-    let w = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Received Packets ")
-            .border_style(Style::default().fg(pc)),
-    );
+    let w = List::new(items).block(panel(theme, " Received Packets ", pc));
     f.render_widget(w, area);
 }
 
@@ -321,10 +302,7 @@ fn noise_bar(dbm: i16, (low, high): (i16, i16)) -> u64 {
 
 fn draw_radio(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Radio ")
-        .border_style(Style::default().fg(theme.radio_border));
+    let block = panel(theme, " Radio ", theme.radio_border);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -385,19 +363,27 @@ fn noise_bar_color(theme: &Theme, bar: u64) -> Color {
 
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
+    let title = format!(
+        " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
+        app.target_label()
+    );
     let w = Paragraph::new(app.input.as_str())
         .style(Style::default().fg(theme.text))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(
-                    " Send to: {} (Enter=send, Tab=panel, ↑↓=contact, F1=deselect, Esc=quit) ",
-                    app.target_label()
-                ))
-                .border_style(Style::default().fg(theme.input_border)),
-        );
+        .block(panel(theme, title, theme.input_border));
     f.render_widget(w, area);
     f.set_cursor_position((area.x + app.input.cursor_column() + 1, area.y + 1));
+}
+
+/// A panel with a rounded border and a bold title
+fn panel<'a>(theme: &Theme, title: impl Into<String>, border: Color) -> Block<'a> {
+    let title_style = Style::default()
+        .fg(theme.title.unwrap_or(border))
+        .add_modifier(Modifier::BOLD);
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .title(Span::styled(title.into(), title_style))
 }
 
 #[cfg(test)]
@@ -634,6 +620,20 @@ mod tests {
         assert_eq!(buffer[(0, 0)].fg, app.theme.status_border);
         assert_eq!(buffer[(79, 3)].fg, app.theme.focus);
         assert_eq!(buffer[(0, 3)].fg, app.theme.messages_border);
+    }
+
+    #[test]
+    fn panel_titles_are_bold_in_the_title_colour() {
+        let mut app = connected_app();
+        for theme in [Theme::VAPORWAVE, Theme::CLASSIC] {
+            app.theme = theme;
+            let backend = render_panel(60, 3, |f, area| draw_status(f, &app, area));
+            // The "S" of " Status "
+            let cell = &backend.buffer()[(2, 0)];
+            assert_eq!(cell.symbol(), "S");
+            assert_eq!(cell.fg, theme.title.unwrap_or(theme.status_border));
+            assert!(cell.modifier.contains(Modifier::BOLD));
+        }
     }
 
     #[test]

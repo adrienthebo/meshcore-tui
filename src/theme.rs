@@ -9,6 +9,8 @@ pub struct Theme {
     pub muted: Color,
     /// Border of the panel that has keyboard focus
     pub focus: Color,
+    /// Panel titles; None draws each title in its border's colour
+    pub title: Option<Color>,
     /// Connection details
     pub info: Color,
     /// Radio parameters
@@ -50,6 +52,7 @@ impl Theme {
         text: Color::White,
         muted: Color::DarkGray,
         focus: Color::Yellow,
+        title: None,
         info: Color::Cyan,
         value: Color::Yellow,
         good: Color::Green,
@@ -85,6 +88,7 @@ impl Theme {
         text: Color::Reset,
         muted: MARDI_GRAS,
         focus: CERISE_PINK,
+        title: Some(LAVENDER_INDIGO),
         info: AQUAMARINE,
         value: CERISE_PINK,
         good: AQUAMARINE,
