@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, RenderDirection, Sparkline, SparklineBar, Tabs},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -14,20 +14,33 @@ use crate::view::{Panel, Tab};
 
 // ── TUI Rendering ────────────────────────────────────────────────────────────
 
-/// Draw the status bar, which every tab shares, above the tab on screen
+/// Draw the status bar and tab bar, which every tab shares, above the tab on screen
 pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // status
+            Constraint::Length(1), // tab bar
             Constraint::Min(0),    // tab
         ])
         .split(f.area());
 
     draw_status(f, app, chunks[0]);
+    draw_tab_bar(f, app, chunks[1]);
     match app.tab {
-        Tab::Overview => draw_overview(f, app, chunks[1]),
+        Tab::Overview => draw_overview(f, app, chunks[2]),
     }
+}
+
+/// Each tab's title, numbered with the digit that shows it alongside Alt
+fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let titles = Tab::ALL.iter().enumerate().map(|(i, tab)| format!("{} {}", i + 1, tab.title()));
+    let tabs = Tabs::new(titles)
+        .select(Tab::ALL.iter().position(|tab| *tab == app.tab))
+        .style(Style::default().fg(theme.muted))
+        .highlight_style(Style::default().fg(theme.focus).add_modifier(Modifier::BOLD));
+    f.render_widget(tabs, area);
 }
 
 fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
@@ -685,13 +698,14 @@ mod tests {
     fn panels_draw_with_the_apps_theme() {
         let mut app = connected_app();
         app.theme = Theme::VAPORWAVE;
-        app.overview.focus= Panel::Contacts;
+        app.overview.focus = Panel::Contacts;
         let backend = render_panel(80, 24, |f, _| draw(f, &app));
         let buffer = backend.buffer();
-        // Status border, then the focused contacts border, then the unfocused messages border
+        // Status border, the current tab's title, then the focused contacts border and the unfocused messages border
         assert_eq!(buffer[(0, 0)].fg, app.theme.status_border);
-        assert_eq!(buffer[(79, 3)].fg, app.theme.focus);
-        assert_eq!(buffer[(0, 3)].fg, app.theme.messages_border);
+        assert_eq!(buffer[(1, 3)].fg, app.theme.focus);
+        assert_eq!(buffer[(79, 4)].fg, app.theme.focus);
+        assert_eq!(buffer[(0, 4)].fg, app.theme.messages_border);
     }
 
     #[test]

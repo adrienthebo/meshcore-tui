@@ -85,6 +85,11 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) && c.is_ascii_digit() => {
+                if let Some(tab) = Tab::for_digit(c) {
+                    self.tab = tab;
+                }
+            }
             _ => {
                 return match self.tab {
                     Tab::Overview => self.handle_overview_key(key),
@@ -234,6 +239,15 @@ mod tests {
         let mut app = App::new(0);
         app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(app.should_quit);
+        assert!(app.overview.input.is_empty());
+    }
+
+    #[test]
+    fn alt_digits_switch_tabs_without_typing() {
+        let mut app = App::new(0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+        app.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::ALT));
+        assert_eq!(app.tab, Tab::Overview);
         assert!(app.overview.input.is_empty());
     }
 
