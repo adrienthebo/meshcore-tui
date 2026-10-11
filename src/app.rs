@@ -210,13 +210,12 @@ impl App {
         self.push_packet("ACK", 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
     }
 
+    /// The radio found a new route to a contact; the push carries only their key
     fn on_path_update(&mut self, pu: &PathUpdateData) {
-        let info = format!(
-            "{} len={}",
-            meshcore_rs::parsing::hex_encode(&pu.prefix),
-            pu.path_len
-        );
-        self.push_packet("PATH", hop_count(pu.path_len), info);
+        let mut prefix = [0u8; 6];
+        prefix.copy_from_slice(&pu.public_key[..6]);
+        let who = self.resolve_sender(&prefix);
+        self.push_packet("PATH", 0, who);
     }
 
     pub fn on_direct_sent(&mut self, contact: &Contact, text: &str, info: &MsgSentInfo) {
@@ -361,7 +360,7 @@ mod tests {
         assert!(!app.apply_radio_event(EventPayload::Contact(contact("Alice", [2; 6]))));
         let adv = AdvertisementData { prefix: [3; 6], name: String::new(), lat: 0, lon: 0 };
         assert!(!app.apply_radio_event(EventPayload::Advertisement(adv)));
-        let path = PathUpdateData { prefix: [2; 6], path_len: 1, path: vec![] };
+        let path = PathUpdateData { public_key: [2; 32] };
         assert!(!app.apply_radio_event(EventPayload::PathUpdate(path)));
         assert!(!app.apply_radio_event(EventPayload::Time(0)));
         assert_eq!(app.messages.len(), 2);
@@ -447,20 +446,15 @@ mod tests {
     }
 
     #[test]
-    fn path_update_logs_hops() {
+    fn path_update_names_the_contact() {
         let mut app = App::new(0);
-        app.on_path_update(&PathUpdateData { prefix: [0xab; 6], path_len: 3, path: vec![] });
-        let p = last_packet(&app);
-        assert_eq!(p.ptype, "PATH");
-        assert_eq!(p.hops, 3);
-        assert_eq!(p.info, "abababababab len=3");
-    }
-
-    #[test]
-    fn path_update_with_flood_path_logs_zero_hops() {
-        let mut app = App::new(0);
-        app.on_path_update(&PathUpdateData { prefix: [1; 6], path_len: -1, path: vec![] });
-        assert_eq!(last_packet(&app).hops, 0);
+        let alice = contact("Alice", [1; 6]);
+        app.on_path_update(&PathUpdateData { public_key: alice.public_key });
+        app.contacts.push(alice.clone());
+        app.on_path_update(&PathUpdateData { public_key: alice.public_key });
+        let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
+        assert_eq!(infos, vec!["10101010101", "Alice"]);
+        assert!(app.packets.iter().all(|p| p.ptype == "PATH"));
     }
 
     #[test]
