@@ -1,0 +1,28 @@
+---
+source: src/rx_log_tab.rs
+expression: "render(&app, &tab_on_channel_message_path(&app), 80, 24)"
+---
+"╭ Packets (3) ─────────────────────────────────────────────────────────────────╮"
+"│Time        SNR RSSI Type       Route    Hops  Len Summary                    │"
+"│12:00:03   0.50 -120 —          —           —    0                            │"
+"│12:00:02  -2.75 -112 ADVERT     flood       2  105 Hilltop 🖖                 │" Hidden by multi-width symbols: [(61, " ")]
+"│12:00:01   9.25  -28 GRP_TXT    flood       3   55 ch d9                      │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╭ Fields ──────────────────────────────────────────────────────────────────────╮"
+"│ Off Bytes        Field          Value                                        │"
+"│   0 15           header         route flood · type GRP_TXT · ver 0           │"
+"│   1 03           path len       3 hops × 1 byte                              │"
+"│   2 A1 7F 3C     path           a1 → 7f → 3c                                 │"
+"│   5 D9 5A 5A …   payload        50 bytes                                     │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"╭ Hex ─────────────────────────────────────────────────────────────────────────╮"
+"│0000  15 03 A1 7F 3C D9 5A 5A  5A 5A 5A 5A 5A 5A 5A 5A  ....<.ZZZZZZZZZZ      │"
+"│0010  5A 5A 5A 5A 5A 5A 5A 5A  5A 5A 5A 5A 5A 5A 5A 5A  ZZZZZZZZZZZZZZZZ      │"
+"│0020  5A 5A 5A 5A 5A 5A 5A 5A  5A 5A 5A 5A 5A 5A 5A 5A  ZZZZZZZZZZZZZZZZ      │"
+"│0030  5A 5A 5A 5A 5A 5A 5A                              ZZZZZZZ               │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
