@@ -4,6 +4,7 @@ use ratatui::{layout::Rect, Frame};
 use crate::app::App;
 use crate::contacts_tab::ContactsTab;
 use crate::overview::Overview;
+use crate::radio_tab::RadioTab;
 use crate::theme::Theme;
 use crate::update::Action;
 
@@ -43,7 +44,7 @@ pub struct Ui {
 impl Ui {
     pub fn new(theme: Theme) -> Self {
         Self {
-            tabs: vec![Box::new(Overview::default()), Box::new(ContactsTab::default())],
+            tabs: vec![Box::new(Overview::default()), Box::new(ContactsTab::default()), Box::new(RadioTab)],
             active: 0,
             theme,
         }

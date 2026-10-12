@@ -4,6 +4,7 @@ mod contacts_tab;
 mod input;
 mod overview;
 mod radio;
+mod radio_tab;
 mod stats;
 mod tab_bar;
 #[cfg(test)]
