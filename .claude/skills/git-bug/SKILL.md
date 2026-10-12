@@ -58,8 +58,11 @@ git bug bug status close <id>
 git bug bug status open <id>
 ```
 
-For multi-line bodies, pass the text on stdin with `-F -` and a heredoc.
-`bug new` prints the new ID. Add the label right after creating the issue.
+For multi-line bodies, pass a quoted multi-line string to `-m`. Don't use `-F`
+with `bug new`: it takes the first line of the file as the title, overriding
+`-t`, and drops that line from the body. `bug new` prints the new ID. Add the
+label right after creating the issue, then check the result with
+`git bug bug show <id>`.
 
 ## Gotchas
 
