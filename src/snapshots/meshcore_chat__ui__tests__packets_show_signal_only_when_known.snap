@@ -3,6 +3,6 @@ source: src/ui.rs
 expression: "render_panel(60, 4, |f, area|\ndraw_packets(f, &app, &Theme::CLASSIC, false, area))"
 ---
 "╭ Activity ────────────────────────────────────────────────╮"
-"│12:34:56 [Ack] H:0 | no signal                            │"
+"│12:34:56 [Ack]    H:0 | no signal                         │"
 "│12:34:56 [Advert] H:1 R:-92dBm S:5.2dB | heard            │"
 "╰──────────────────────────────────────────────────────────╯"

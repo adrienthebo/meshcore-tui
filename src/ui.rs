@@ -287,7 +287,8 @@ pub fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area
                 Span::styled(&p.timestamp, Style::default().fg(theme.muted)),
                 Span::raw(" "),
                 Span::styled(
-                    format!("[{}]", p.kind.label()),
+                    // Six-letter kinds plus brackets, so the columns after line up
+                    format!("{:<8}", format!("[{}]", p.kind.label())),
                     Style::default().fg(tc).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
