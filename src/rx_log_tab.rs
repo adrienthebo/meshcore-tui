@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use meshcore_rs::parsing::hex_encode;
 use meshcore_rs::PayloadType;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -167,7 +168,8 @@ impl RxLogTab {
     }
 }
 
-/// What the packet is about, where the radio decoded it: an advert's name, a channel message's channel hash
+/// What the packet is about, where the radio decoded it: an advert's name, a
+/// channel message's channel hash and MAC
 fn summary(packet: &RxPacket) -> String {
     let log = &packet.log;
     match log.header.as_ref().map(|h| h.payload_type) {
@@ -177,9 +179,10 @@ fn summary(packet: &RxPacket) -> String {
             .and_then(|a| a.name.as_deref())
             .map(sanitize)
             .unwrap_or_default(),
-        Some(PayloadType::GroupText) => {
-            log.payload.first().map(|hash| format!("channel hash 0x{:02x}", hash)).unwrap_or_default()
-        }
+        Some(PayloadType::GroupText) => match log.payload.get(..3) {
+            Some([hash, mac @ ..]) => format!("chan hash 0x{:02x} mac 0x{}", hash, hex_encode(mac)),
+            _ => String::new(),
+        },
         _ => String::new(),
     }
 }
@@ -642,6 +645,6 @@ mod tests {
     fn summary_names_adverts_and_channel_hashes() {
         let app = app_with_packets();
         let summaries: Vec<String> = RxLogTab::default().newest_first(&app).map(summary).collect();
-        assert_eq!(summaries, ["", "Hilltop 🖖", "channel hash 0xd9"]);
+        assert_eq!(summaries, ["", "Hilltop 🖖", "chan hash 0xd9 mac 0x5a5a"]);
     }
 }
