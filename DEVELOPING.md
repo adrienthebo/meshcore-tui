@@ -49,23 +49,20 @@ Three of these are easy to mix up:
 Typing `hi` and pressing Enter on the Overview tab, with a contact selected:
 
 1. **Key → view.** The main loop wraps the key in `Msg::Key` and calls
-   `update` (`src/main.rs:78`). `Ui::handle_key` passes it to the tab on
-   screen (`src/view.rs:62`). The Overview passes it to its focused panel, the
-   input line (`src/overview.rs:43`).
-2. **View → Action.** The input line takes its text and returns
-   `KeyResult::Action(Action::Submit("hi"))` (`src/input.rs:95`). It can't send
-   anything itself: views read `App` but never change it.
-3. **Action → Effect.** `apply_action` hands the line to `App::submit`
-   (`src/update.rs:75`). It isn't a slash command, so `submit` returns
-   `Effect::Send { to: <the contact>, text: "hi" }` (`src/commands.rs:346`).
-4. **Effect → radio.** The main loop sends the effect to the radio task
-   (`src/main.rs:82`). `send_text` calls meshcore-rs and gets back
-   `Outcome::DirectSent` (`src/radio.rs:199`). The UI keeps drawing while it
-   waits.
+   `update`. `Ui::handle_key` passes it to the tab on screen. The Overview
+   passes it to its focused panel, the input line.
+2. **View → Action.** The input line's `handle_key` takes its text and
+   returns `KeyResult::Action(Action::Submit("hi"))`. It can't send anything
+   itself: views read `App` but never change it.
+3. **Action → Effect.** `apply_action` hands the line to `App::submit`. It
+   isn't a slash command, so `submit` returns
+   `Effect::Send { to: <the contact>, text: "hi" }`.
+4. **Effect → radio.** The main loop sends the effect to the radio task,
+   which calls meshcore-rs and gets back `Outcome::DirectSent`. The UI keeps
+   drawing while it waits.
 5. **Result → App.** The outcome comes back as `Msg::EffectDone`.
-   `apply_outcome` calls `on_direct_sent` (`src/commands.rs:333`), which adds
-   the message to the log and the Activity panel (`src/app.rs:268`).
-6. **App → screen.** The next `draw` (`src/ui.rs:21`) shows the sent message.
+   `App::apply_outcome` adds the message to the log and the Activity panel.
+6. **App → screen.** The next `draw` shows the sent message.
 
 Every feature follows this path or part of it. A radio event starts at step 5
 (`Msg::Radio` → `App::apply_radio_event`). A key that only moves a cursor stops
