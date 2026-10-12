@@ -58,6 +58,11 @@ impl RxLog {
         self.packets.push_back(RxPacket { id: self.next_id, timestamp, log });
         self.next_id += 1;
     }
+
+    /// How many packets have been recorded, including those since dropped; the next packet's id
+    pub fn recorded(&self) -> u64 {
+        self.next_id
+    }
 }
 
 /// Payload types by their names in the firmware's PAYLOAD_TYPE_* (Packet.h);

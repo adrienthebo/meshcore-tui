@@ -37,6 +37,9 @@ pub struct RxLogTab {
     table: RefCell<TableState>,
     /// The selected field of the browsed packet, highlighted in the hex dump
     field: usize,
+    /// While paused, how many packets had been recorded when the pause began;
+    /// the tab shows only those
+    paused: Option<u64>,
 }
 
 /// The part of the RX Log tab that has keyboard focus
@@ -58,9 +61,16 @@ impl View for RxLogTab {
 
     /// ↑↓ browse packets, or pick a field of the browsed packet; ↑ past the
     /// newest packet or Home goes back to following the newest. Tab moves
-    /// between packets and fields, browsing the packet on show.
+    /// between packets and fields, browsing the packet on show. p pauses and
+    /// resumes the list.
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match (key.code, &self.focus) {
+            (KeyCode::Char('p'), _) => {
+                self.paused = match self.paused {
+                    Some(_) => None,
+                    None => Some(app.rx_log.recorded()),
+                };
+            }
             (KeyCode::Home, _) => self.follow_newest(),
             (KeyCode::Tab, Section::Packets) => {
                 // Hold the packet on show still, so its fields don't change under the selection
@@ -84,11 +94,13 @@ impl View for RxLogTab {
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
-        match (&self.focus, self.browsed) {
+        let mut hints = match (&self.focus, self.browsed) {
             (Section::Packets, None) => vec!["↓=browse", "Tab=panel"],
             (Section::Packets, Some(_)) => vec!["↑↓=browse", "Home=newest", "Tab=panel"],
             (Section::Fields, _) => vec!["↑↓=field", "Home=newest", "Tab=panel"],
-        }
+        };
+        hints.push(if self.paused.is_some() { "p=resume" } else { "p=pause" });
+        hints
     }
 }
 
@@ -102,7 +114,7 @@ impl RxLogTab {
     /// from the newest goes back to following. A newly browsed packet starts at
     /// its first field.
     fn browse(&mut self, app: &App, step: Step) {
-        let Some(last) = app.rx_log.packets.len().checked_sub(1) else {
+        let Some(last) = self.newest_first(app).count().checked_sub(1) else {
             return;
         };
         let row = match (self.browsed_row(app), step) {
@@ -112,7 +124,7 @@ impl RxLogTab {
             (Some(row), Step::Up) => row - 1,
             (Some(row), Step::Down) => (row + 1).min(last),
         };
-        self.browsed = newest_first(app).nth(row).map(|p| p.id);
+        self.browsed = self.newest_first(app).nth(row).map(|p| p.id);
         self.field = 0;
     }
 
@@ -126,25 +138,33 @@ impl RxLogTab {
     /// The browsed packet's row; None when none is browsed or it has dropped out of the log
     fn browsed_row(&self, app: &App) -> Option<usize> {
         let id = self.browsed?;
-        newest_first(app).position(|p| p.id == id)
+        self.newest_first(app).position(|p| p.id == id)
     }
 
     fn browsed_packet<'a>(&self, app: &'a App) -> Option<&'a RxPacket> {
-        newest_first(app).nth(self.browsed_row(app)?)
+        self.newest_first(app).nth(self.browsed_row(app)?)
     }
 
     /// The packet the fields show: the browsed one, else the newest
     fn shown_packet<'a>(&self, app: &'a App) -> Option<&'a RxPacket> {
-        self.browsed_packet(app).or_else(|| app.rx_log.packets.back())
+        self.browsed_packet(app).or_else(|| self.newest_first(app).next())
     }
 
     fn shown_layout(&self, app: &App) -> Option<PacketLayout> {
         PacketLayout::of(&self.shown_packet(app)?.log)
     }
-}
 
-fn newest_first(app: &App) -> impl Iterator<Item = &RxPacket> {
-    app.rx_log.packets.iter().rev()
+    /// The packets on show newest first: all of them, or while paused those
+    /// recorded before the pause
+    fn newest_first<'a>(&self, app: &'a App) -> impl Iterator<Item = &'a RxPacket> {
+        let shown = self.paused.unwrap_or(u64::MAX);
+        app.rx_log.packets.iter().rev().skip_while(move |p| p.id >= shown)
+    }
+
+    /// The packets recorded since the pause began
+    fn arrived_while_paused(&self, app: &App) -> Option<u64> {
+        Some(app.rx_log.recorded() - self.paused?)
+    }
 }
 
 /// What the packet is about, where the radio decoded it: an advert's name, a channel message's channel hash
@@ -208,7 +228,11 @@ fn draw_rx_log_tab(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area
 }
 
 fn draw_packets(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: Rect) {
-    let rows: Vec<Row> = newest_first(app).map(|packet| packet_row(packet, theme)).collect();
+    let rows: Vec<Row> = tab.newest_first(app).map(|packet| packet_row(packet, theme)).collect();
+    let title = match tab.arrived_while_paused(app) {
+        Some(arrived) => format!(" Packets ({}) · paused, {} new ", rows.len(), arrived),
+        None => format!(" Packets ({}) ", rows.len()),
+    };
     let header = Row::new(["Time", "   SNR", "RSSI", "Type", "Route", "Hops", " Len", "Summary"])
         .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
     let widths = [
@@ -225,11 +249,7 @@ fn draw_packets(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: R
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
-        .block(panel(
-            theme,
-            format!(" Packets ({}) ", app.rx_log.packets.len()),
-            focus_border(tab, Section::Packets, theme.packets_border, theme),
-        ));
+        .block(panel(theme, title, focus_border(tab, Section::Packets, theme.packets_border, theme)));
     let mut state = tab.table.borrow_mut();
     state.select(tab.browsed_row(app));
     f.render_stateful_widget(table, area, &mut state);
@@ -404,14 +424,52 @@ mod tests {
     }
 
     #[test]
+    fn pause_freezes_the_packets_and_counts_the_new_ones() {
+        let (mut tab, mut app) = (RxLogTab::default(), app_with_packets());
+        assert_eq!(press(&mut tab, &app, KeyCode::Char('p')), KeyResult::Handled);
+        assert_eq!(tab.key_hints().last(), Some(&"p=resume"));
+        app.rx_log.record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
+        app.rx_log.record("12:00:05".to_string(), advert_log("Hilltop"));
+        let text = screen_text(&render(&app, &tab, 80, 24));
+        assert!(text.contains(" Packets (3) · paused, 2 new "));
+        // The fields still follow the newest packet from before the pause
+        assert!(text.contains("Can't show its bytes"));
+        assert!(!text.contains("12:00:04"));
+        // Browsing moves only through the packets from before the pause
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(tab.browsed, Some(2));
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Down);
+        }
+        assert_eq!(tab.browsed, Some(0));
+        // Resuming shows them all, keeping the browsed packet
+        press(&mut tab, &app, KeyCode::Char('p'));
+        let text = screen_text(&render(&app, &tab, 80, 24));
+        assert!(text.contains(" Packets (5) "));
+        assert!(text.contains("12:00:05"));
+        assert_eq!(tab.browsed_row(&app), Some(4));
+    }
+
+    #[test]
+    fn pause_counts_new_packets_past_the_ring_buffer() {
+        let (mut tab, mut app) = (RxLogTab::default(), App::new(0));
+        press(&mut tab, &app, KeyCode::Char('p'));
+        for _ in 0..crate::rx_log::RX_LOG_LEN + 3 {
+            app.rx_log.record(String::new(), LogData::default());
+        }
+        assert_eq!(tab.arrived_while_paused(&app), Some(crate::rx_log::RX_LOG_LEN as u64 + 3));
+        assert_eq!(tab.newest_first(&app).count(), 0);
+    }
+
+    #[test]
     fn home_and_up_past_the_newest_go_back_to_following_it() {
         let (mut tab, app) = (RxLogTab::default(), app_with_packets());
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Down);
-        assert_eq!(tab.key_hints(), ["↑↓=browse", "Home=newest", "Tab=panel"]);
+        assert_eq!(tab.key_hints(), ["↑↓=browse", "Home=newest", "Tab=panel", "p=pause"]);
         assert_eq!(press(&mut tab, &app, KeyCode::Home), KeyResult::Handled);
         assert_eq!(tab.browsed, None);
-        assert_eq!(tab.key_hints(), ["↓=browse", "Tab=panel"]);
+        assert_eq!(tab.key_hints(), ["↓=browse", "Tab=panel", "p=pause"]);
         // From the fields too, which hand focus back to the packets
         let mut tab = tab_on_channel_message_path(&app);
         press(&mut tab, &app, KeyCode::Home);
@@ -481,7 +539,7 @@ mod tests {
         assert_eq!(press(&mut tab, &app, KeyCode::Tab), KeyResult::Handled);
         // The newest, which the fields were following
         assert_eq!(tab.browsed, Some(2));
-        assert_eq!(tab.key_hints(), ["↑↓=field", "Home=newest", "Tab=panel"]);
+        assert_eq!(tab.key_hints(), ["↑↓=field", "Home=newest", "Tab=panel", "p=pause"]);
         press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.focus, Section::Packets);
         // A browsed packet keeps its selected field through Tab and back
@@ -559,7 +617,7 @@ mod tests {
     #[test]
     fn summary_names_adverts_and_channel_hashes() {
         let app = app_with_packets();
-        let summaries: Vec<String> = newest_first(&app).map(summary).collect();
+        let summaries: Vec<String> = RxLogTab::default().newest_first(&app).map(summary).collect();
         assert_eq!(summaries, ["", "Hilltop 🖖", "ch d9"]);
     }
 }
