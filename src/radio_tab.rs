@@ -151,7 +151,7 @@ fn draw_noise_chart(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             format!("{} dBm", latest.noise_floor),
             Style::default().fg(theme.quality(noise_quality(latest.noise_floor))),
         ),
-        Span::styled(format!("  (min {} / max {}) ", min, max), Style::default().fg(theme.text)),
+        Span::styled(format!("  (min {} dBm / max {} dBm) ", min, max), Style::default().fg(theme.text)),
     ]);
     let (low, high) = padded_bounds([min as f64, max as f64].into_iter(), 10.0).unwrap();
     let runs = noise_runs(&history);

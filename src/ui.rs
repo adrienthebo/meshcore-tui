@@ -361,7 +361,7 @@ pub fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let readings = visible.iter().flatten().copied();
     let min_max = readings.clone().min().zip(readings.max());
     let range = min_max
-        .map(|(min, max)| format!("  (min {} / max {})", min, max))
+        .map(|(min, max)| format!("  (min {} dBm / max {} dBm)", min, max))
         .unwrap_or_default();
     let noise_colour = |dbm: i16| theme.quality(noise_quality(dbm));
     let header = Line::from(vec![
@@ -776,7 +776,7 @@ mod tests {
     fn radio_header_shows_range_of_visible_readings() {
         let app = app_with_noise(&[Some(-90), Some(-118), None, Some(-104)]);
         let rows = rows(&render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area)));
-        assert!(rows[1].contains("Noise -104 dBm  (min -118 / max -90)"));
+        assert!(rows[1].contains("Noise -104 dBm  (min -118 dBm / max -90 dBm)"));
     }
 
     #[test]

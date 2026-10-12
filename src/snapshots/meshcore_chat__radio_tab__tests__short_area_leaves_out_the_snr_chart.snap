@@ -2,7 +2,7 @@
 source: src/radio_tab.rs
 expression: "render(&app_with_history(), 80, 24)"
 ---
-"╭ Noise floor -96 dBm  (min -118 / max -96) ───────────────────────────────────╮"
+"╭ Noise floor -96 dBm  (min -118 dBm / max -96 dBm) ───────────────────────────╮"
 "│-80 │                                                                         │"
 "│    │                                                                         │"
 "│    │                                                                       ▄▄│"

@@ -1,9 +1,9 @@
 ---
 source: src/ui.rs
-expression: "render_panel(50, 7, |f, area| draw_radio(f, &app, area))"
+expression: "render_panel(50, 7, |f, area| draw_radio(f, &app, &Theme::CLASSIC, area))"
 ---
 "╭ Radio ─────────────────────────────────────────╮"
-"│Noise -80 dBm  (min -120 / max -80)             │"
+"│Noise -80 dBm  (min -120 dBm / max -80 dBm)     │"
 "│                                              ▂█│"
 "│                                            ▄ ██│"
 "│                                          ▁▆█ ██│"
