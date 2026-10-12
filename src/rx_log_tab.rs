@@ -166,13 +166,15 @@ fn summary(packet: &RxPacket) -> String {
 fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let header = packet.log.header.as_ref();
     let (snr, rssi) = (packet.log.snr, packet.log.rssi);
+    // Hops and the bytes of each hop's hash: 3×1
+    let hops = header.map_or(UNKNOWN.to_string(), |h| format!("{}×{}", h.path_len, h.path_hash_size));
     Row::new([
         Cell::from(packet.timestamp.clone()),
         Cell::from(Span::styled(format!("{:>6.2}", snr), Style::default().fg(theme.quality(snr_quality(snr))))),
         Cell::from(Span::styled(format!("{:>4}", rssi), Style::default().fg(theme.quality(rssi_quality(rssi))))),
         Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
         Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
-        Cell::from(header.map_or(format!("{:>4}", UNKNOWN), |h| format!("{:>4}", h.path_len))),
+        Cell::from(format!("{:>4}", hops)),
         Cell::from(format!("{:>4}", packet.len())),
         Cell::from(summary(packet)),
     ])
