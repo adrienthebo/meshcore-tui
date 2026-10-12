@@ -64,10 +64,10 @@ impl PacketKind {
     /// The tag shown in the activity panel
     pub fn label(self) -> &'static str {
         match self {
-            PacketKind::Advert => "ADV",
-            PacketKind::Ack => "ACK",
-            PacketKind::Path => "PATH",
-            PacketKind::Sent => "SND",
+            PacketKind::Advert => "Advert",
+            PacketKind::Ack => "Ack",
+            PacketKind::Path => "Path",
+            PacketKind::Sent => "Sent",
         }
     }
 }
