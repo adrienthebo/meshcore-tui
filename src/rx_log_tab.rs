@@ -184,6 +184,17 @@ fn summary(packet: &RxPacket) -> String {
     }
 }
 
+/// A colour for each hop hash size, so packets using a different size stand
+/// out; 4 is reserved and invalid (Packet::isValidPathLen)
+fn hash_size_colour(bytes: u8, theme: &Theme) -> Color {
+    match bytes {
+        1 => theme.text,
+        2 => theme.info,
+        3 => theme.value,
+        _ => theme.bad,
+    }
+}
+
 /// A packet's row, its SNR and RSSI coloured on the same scales as the Radio
 /// tab and its length from short (good) to long (poor)
 fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
@@ -191,13 +202,14 @@ fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let (snr, rssi, len) = (packet.log.snr, packet.log.rssi, packet.len());
     // Hops and the bytes of each hop's hash: 3×1
     let hops = header.map_or(UNKNOWN.to_string(), |h| format!("{}×{}", h.path_len, h.path_hash_size));
+    let hops_colour = header.map_or(theme.text, |h| hash_size_colour(h.path_hash_size, theme));
     Row::new([
         Cell::from(packet.timestamp.clone()),
         Cell::from(Span::styled(format!("{:>6.2}", snr), Style::default().fg(theme.quality(snr_quality(snr))))),
         Cell::from(Span::styled(format!("{:>4}", rssi), Style::default().fg(theme.quality(rssi_quality(rssi))))),
         Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
         Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
-        Cell::from(format!("{:>4}", hops)),
+        Cell::from(Span::styled(format!("{:>4}", hops), Style::default().fg(hops_colour))),
         Cell::from(Span::styled(format!("{:>4}", len), Style::default().fg(theme.quality(length_quality(len))))),
         Cell::from(summary(packet)),
     ])
@@ -411,6 +423,14 @@ mod tests {
             assert_eq!(buffer[(49, y)].fg, theme.quality(length_quality(len)), "length on row {}", y);
         }
         assert_ne!(buffer[(15, 3)].fg, buffer[(15, 4)].fg);
+    }
+
+    #[test]
+    fn each_hop_hash_size_has_its_own_colour() {
+        let theme = Theme::CLASSIC;
+        let colours: Vec<Color> = (1..=4).map(|bytes| hash_size_colour(bytes, &theme)).collect();
+        assert_eq!(colours, [theme.text, theme.info, theme.value, theme.bad]);
+        assert!(colours[..3].iter().enumerate().all(|(i, c)| !colours[..i].contains(c)));
     }
 
     #[test]
