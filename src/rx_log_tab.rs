@@ -177,7 +177,9 @@ fn summary(packet: &RxPacket) -> String {
             .and_then(|a| a.name.as_deref())
             .map(sanitize)
             .unwrap_or_default(),
-        Some(PayloadType::GroupText) => log.payload.first().map(|hash| format!("ch {:02x}", hash)).unwrap_or_default(),
+        Some(PayloadType::GroupText) => {
+            log.payload.first().map(|hash| format!("channel hash 0x{:02x}", hash)).unwrap_or_default()
+        }
         _ => String::new(),
     }
 }
@@ -618,6 +620,6 @@ mod tests {
     fn summary_names_adverts_and_channel_hashes() {
         let app = app_with_packets();
         let summaries: Vec<String> = RxLogTab::default().newest_first(&app).map(summary).collect();
-        assert_eq!(summaries, ["", "Hilltop 🖖", "ch d9"]);
+        assert_eq!(summaries, ["", "Hilltop 🖖", "channel hash 0xd9"]);
     }
 }
