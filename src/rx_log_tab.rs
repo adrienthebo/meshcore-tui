@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Row, Table, TableState},
+    widgets::{Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
 
@@ -14,7 +14,7 @@ use crate::app::App;
 use crate::rx_log::{payload_type_label, route_label, Field, PacketLayout, RxPacket};
 use crate::text::sanitize;
 use crate::theme::Theme;
-use crate::ui::panel;
+use crate::ui::{panel, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
 /// Shown in place of a part of the packet the radio didn't send
@@ -162,17 +162,19 @@ fn summary(packet: &RxPacket) -> String {
     }
 }
 
-fn packet_row(packet: &RxPacket) -> Row<'static> {
+/// A packet's row, its SNR and RSSI coloured on the same scales as the Radio tab
+fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let header = packet.log.header.as_ref();
+    let (snr, rssi) = (packet.log.snr, packet.log.rssi);
     Row::new([
-        packet.timestamp.clone(),
-        format!("{:>6.2}", packet.log.snr),
-        format!("{:>4}", packet.log.rssi),
-        header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type)).to_string(),
-        header.map_or(UNKNOWN, |h| route_label(h.route_type)).to_string(),
-        header.map_or(format!("{:>4}", UNKNOWN), |h| format!("{:>4}", h.path_len)),
-        format!("{:>4}", packet.len()),
-        summary(packet),
+        Cell::from(packet.timestamp.clone()),
+        Cell::from(Span::styled(format!("{:>6.2}", snr), Style::default().fg(theme.quality(snr_quality(snr))))),
+        Cell::from(Span::styled(format!("{:>4}", rssi), Style::default().fg(theme.quality(rssi_quality(rssi))))),
+        Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
+        Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
+        Cell::from(header.map_or(format!("{:>4}", UNKNOWN), |h| format!("{:>4}", h.path_len))),
+        Cell::from(format!("{:>4}", packet.len())),
+        Cell::from(summary(packet)),
     ])
 }
 
@@ -204,7 +206,7 @@ fn draw_rx_log_tab(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area
 }
 
 fn draw_packets(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: Rect) {
-    let rows: Vec<Row> = newest_first(app).map(packet_row).collect();
+    let rows: Vec<Row> = newest_first(app).map(|packet| packet_row(packet, theme)).collect();
     let header = Row::new(["Time", "   SNR", "RSSI", "Type", "Route", "Hops", " Len", "Summary"])
         .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
     let widths = [
@@ -368,6 +370,21 @@ mod tests {
         let app = app_with_packets();
         terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
         insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn snr_and_rssi_are_coloured_by_quality() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 7)).unwrap();
+        let app = app_with_packets();
+        terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
+        let buffer = terminal.backend().buffer();
+        let theme = Theme::CLASSIC;
+        // Rows 2-4 are the packets newest first; SNR ends at column 15 and RSSI at 20
+        for (y, snr, rssi) in [(3, -2.75, -112), (4, 9.25, -28)] {
+            assert_eq!(buffer[(15, y)].fg, theme.quality(snr_quality(snr)), "SNR on row {}", y);
+            assert_eq!(buffer[(20, y)].fg, theme.quality(rssi_quality(rssi)), "RSSI on row {}", y);
+        }
+        assert_ne!(buffer[(15, 3)].fg, buffer[(15, 4)].fg);
     }
 
     #[test]
