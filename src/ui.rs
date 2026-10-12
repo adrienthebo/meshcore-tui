@@ -419,12 +419,12 @@ fn rssi_quality(dbm: i8) -> f32 {
 }
 
 /// SNR from below what SF7 can decode (about -7.5 dB) up to a clean link
-fn snr_quality(db: f32) -> f32 {
+pub fn snr_quality(db: f32) -> f32 {
     quality(db, -10.0, 10.0)
 }
 
 /// Noise floor, where lower is better, down to the firmware's lowest reading of -120 dBm
-fn noise_quality(dbm: i16) -> f32 {
+pub fn noise_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -90.0, -120.0)
 }
 
@@ -442,7 +442,7 @@ pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, fo
 }
 
 /// A panel with a rounded border and a bold title
-pub fn panel<'a>(theme: &Theme, title: impl Into<String>, border: Color) -> Block<'a> {
+pub fn panel<'a>(theme: &Theme, title: impl Into<Line<'a>>, border: Color) -> Block<'a> {
     let title_style = Style::default()
         .fg(theme.title.unwrap_or(border))
         .add_modifier(Modifier::BOLD);
@@ -450,7 +450,7 @@ pub fn panel<'a>(theme: &Theme, title: impl Into<String>, border: Color) -> Bloc
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border))
-        .title(Span::styled(title.into(), title_style))
+        .title(title.into().style(title_style))
 }
 
 #[cfg(test)]
