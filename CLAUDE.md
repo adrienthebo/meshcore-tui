@@ -16,10 +16,9 @@ Toy project: commit on master.
 ## Architecture
 
 Nested Elm architecture. `DEVELOPING.md` explains the UI patterns: the
-message loop, its types, and one key press traced end to end. Read it before
-changing UI code. Background and rejected alternatives:
-`.agents/memories/ui-architecture.md` (parts of its migration plan are out of
-date; the code wins).
+message loop, its types, one key press traced end to end, the rules for
+nested views, and the alternatives we rejected. Read it before changing UI
+code.
 
 - `App` (`app.rs`) is domain state, owned by the main loop. No `Arc<Mutex>`.
 - `Ui` (`view.rs`) holds view state. Tabs and panels implement `View`;

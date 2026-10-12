@@ -70,3 +70,61 @@ Typing `hi` and pressing Enter on the Overview tab, with a contact selected:
 Every feature follows this path or part of it. A radio event starts at step 5
 (`Msg::Radio` → `App::apply_radio_event`). A key that only moves a cursor stops
 at step 2 with `KeyResult::Handled`.
+
+## Nested views
+
+The Elm architecture is nested here. Each view's `handle_key` is that view's
+own update: it changes the view's state (cursor, scroll, focus) and nothing
+else. When the key should change the `App`, it returns an `Action`, and
+`apply_action` makes the change. Views run inside `update`, so every change
+still happens in one place, in order.
+
+A tab can hold panels the same way. The Overview hands each key to its focused
+panel, and takes the key itself only when the panel returns
+`KeyResult::Ignored`.
+
+### Rules
+
+1. **Domain data lives on `App`, nowhere else.** Views keep only state that
+   means nothing outside the screen: cursor, scroll, focus, open or closed.
+   They read `&App` when they draw or take a key, and never keep a copy.
+2. **Refer to things by identity, not position.** Use a contact's public key,
+   not its index in a list. Lists reload and re-sort, and a stored position
+   then points at something else.
+3. **Only `radio.rs` talks to the radio.** If `update` needs the radio, it
+   returns an `Effect`.
+4. **No `_ =>` catch-alls in `Msg` or `Action` routing**, so a new variant
+   fails to compile until it's handled.
+5. **Key routing order**: the keys every tab shares (Esc, Ctrl-C, F-keys)
+   come first, then the focused panel, then its tab. The first to use the key
+   wins.
+
+### Why not components or Flux
+
+Both were considered and rejected.
+
+- **Components** (ratatui's component template: `Box<dyn Component>`, each
+  owning its data, actions broadcast to all). Our data is shared by every
+  view. A new contact matters to the contacts panel, sender names, `/to`, the
+  selection and the Contacts tab. Components that own data either keep copies
+  that drift apart or share `Rc<RefCell<…>>`, which brings runtime borrow
+  panics and no single ordered place where state changes. Our views are boxed
+  too, but they own only screen state and read the one `App`.
+- **Flux** (dispatcher, stores, change notifications). Notifications exist to
+  limit re-renders, and ratatui redraws every frame anyway. Our changes cut
+  across stores (a channel message touches messages, contacts and channels),
+  so stores would have to wait on or read each other. Without those parts,
+  Flux is Elm.
+
+### Known pitfalls
+
+- **Late or stale effect results.** A result can arrive after the user has
+  moved on, or from before a reconnect. Tag requests whose timing matters
+  with an id or generation, and drop stale ones.
+- **Effects that must run in order**, like the startup sequence or a repeater
+  login followed by a command. The radio task runs effects one at a time in
+  the order they're sent; meshcore-rs serializes commands anyway, so effects
+  keep the UI responsive rather than making radio calls parallel.
+- **State only known while drawing.** Scroll offsets and layout areas come
+  from the last frame. Keep them in view state, written by `draw`, in one
+  clearly named place.
