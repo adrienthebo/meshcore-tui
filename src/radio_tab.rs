@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::stats::HISTORY_SECS;
+use crate::stats::{ClockReading, HISTORY_SECS};
 use crate::theme::Theme;
 use crate::text::format_duration;
 use crate::ui::{noise_quality, panel, rssi_quality, snr_quality};
@@ -84,7 +84,7 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
     draw_packets(f, app, theme, packets);
 
     let [device, errors, settings] = three_columns(device);
-    f.render_widget(panel(theme, " Device ", theme.radio_border), device);
+    draw_device(f, app, theme, device);
     draw_errors(f, app, theme, errors);
     f.render_widget(panel(theme, " Settings ", theme.radio_border), settings);
 }
@@ -92,8 +92,8 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
 /// Shown in place of a reading the radio hasn't sent yet
 const UNKNOWN: &str = "—";
 
-/// Width of the Signal panel's labels, so its values line up
-const SIGNAL_LABEL_WIDTH: usize = 10;
+/// Width of the Signal and Device panels' labels, so their values line up
+const LABEL_WIDTH: usize = 10;
 
 /// A reading: its label, muted and padded to `width`, then its value
 fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> [Span<'a>; 2] {
@@ -121,9 +121,9 @@ fn draw_signal(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     };
     let queue = app.diagnostics.core.map_or(UNKNOWN.to_string(), |core| core.queue_len.to_string());
     let rows = vec![
-        Line::from_iter(reading(theme, "Last RSSI", SIGNAL_LABEL_WIDTH, rssi)),
-        Line::from_iter(reading(theme, "Last SNR", SIGNAL_LABEL_WIDTH, snr)),
-        Line::from_iter(reading(theme, "TX queue", SIGNAL_LABEL_WIDTH, value(theme, queue))),
+        Line::from_iter(reading(theme, "Last RSSI", LABEL_WIDTH, rssi)),
+        Line::from_iter(reading(theme, "Last SNR", LABEL_WIDTH, snr)),
+        Line::from_iter(reading(theme, "TX queue", LABEL_WIDTH, value(theme, queue))),
     ];
     draw_readings(f, theme, " Signal ", rows, area);
 }
@@ -197,6 +197,37 @@ fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         row("flood", packets.flood_rx, packets.flood_tx),
         row("direct", packets.direct_rx, packets.direct_tx),
         row("total", packets.recv, packets.sent),
+    ];
+    f.render_widget(Paragraph::new(rows).block(block), area);
+}
+
+/// How far the radio's clock is from the host's, e.g. "5s behind"
+fn clock_drift(clock: ClockReading) -> String {
+    let drift = clock.radio as i64 - clock.host;
+    let size = format_duration(drift.unsigned_abs().try_into().unwrap_or(u32::MAX));
+    match drift {
+        0 => "in sync".to_string(),
+        d if d > 0 => format!("{} ahead", size),
+        _ => format!("{} behind", size),
+    }
+}
+
+/// The radio's battery, storage and clock
+fn draw_device(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let block = panel(theme, " Device ", theme.radio_border);
+    let (Some(battery), Some(clock)) = (app.diagnostics.battery.as_ref(), app.diagnostics.clock) else {
+        return waiting(f, theme, block, "waiting for diagnostics…", area);
+    };
+    let storage = match (battery.used_kb, battery.total_kb) {
+        (Some(used), Some(total)) => format!("{} / {} KB", with_separators(used), with_separators(total)),
+        _ => UNKNOWN.to_string(),
+    };
+    let rows = vec![
+        Line::from_iter(reading(theme, "Battery", LABEL_WIDTH, value(theme, format!("{:.2} V", battery.battery_mv as f64 / 1000.0)))),
+        Line::from_iter(reading(theme, "Storage", LABEL_WIDTH, value(theme, storage))),
+        Line::from_iter(reading(theme, "Clock", LABEL_WIDTH, value(theme, clock_drift(clock)))),
+        // The radio reports its MCU temperature only as self telemetry, which meshcore-rs can't request yet
+        Line::from_iter(reading(theme, "MCU temp", LABEL_WIDTH, value(theme, UNKNOWN))),
     ];
     f.render_widget(Paragraph::new(rows).block(block), area);
 }
@@ -434,6 +465,14 @@ mod tests {
         assert_eq!(with_separators(999), "999");
         assert_eq!(with_separators(1_204), "1,204");
         assert_eq!(with_separators(4_294_967_295), "4,294,967,295");
+    }
+
+    #[test]
+    fn clock_drift_says_which_way() {
+        let drift = |radio: u32| clock_drift(ClockReading { radio, host: NOW });
+        assert_eq!(drift(NOW as u32), "in sync");
+        assert_eq!(drift(NOW as u32 + 90), "1m30s ahead");
+        assert_eq!(drift(NOW as u32 - 5), "5s behind");
     }
 
     #[test]
