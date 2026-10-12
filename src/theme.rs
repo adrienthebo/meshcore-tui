@@ -41,6 +41,8 @@ pub struct Theme {
     /// The selected contact
     pub selected_fg: Color,
     pub selected_bg: Color,
+    /// The RX Log's selected field and its bytes, set apart from the selected packet
+    pub selected_bg_alt: Color,
 
     /// Signal readings (RSSI, SNR, noise floor) from poor through fair to good
     pub quality_poor: Color,
@@ -79,14 +81,16 @@ impl Theme {
 
         selected_fg: Color::Black,
         selected_bg: Color::Cyan,
+        selected_bg_alt: Color::Cyan,
 
         quality_poor: Color::Red,
         quality_fair: Color::Yellow,
         quality_good: Color::Green,
     };
 
-    /// The vaporwave palette from mmtp's TUI (pkg/tui/shared/styles.go), on the
-    /// terminal's own background and text colour; needs a truecolor terminal
+    /// The vaporwave palette from mmtp's TUI (pkg/tui/shared/styles.go), plus a
+    /// burnt orange for the RX Log's field highlight, on the terminal's own
+    /// background and text colour; needs a truecolor terminal
     pub const VAPORWAVE: Theme = Theme {
         text: Color::Reset,
         muted: MARDI_GRAS,
@@ -116,6 +120,7 @@ impl Theme {
 
         selected_fg: Color::Reset,
         selected_bg: RUSSIAN_VIOLET,
+        selected_bg_alt: BURNT_ORANGE,
 
         quality_poor: PERSIAN_ROSE,
         quality_fair: RAJAH,
@@ -160,6 +165,8 @@ const AQUAMARINE: Color = Color::Rgb(0x65, 0xf4, 0xda);
 const PINK_LAVENDER: Color = Color::Rgb(0xef, 0xb7, 0xff);
 const MAYA_BLUE: Color = Color::Rgb(0x5b, 0xc8, 0xf5);
 const NEON_GREEN: Color = Color::Rgb(0x26, 0xff, 0x4e);
+/// Not from mmtp's palette: the RX Log's field highlight, which Russian violet left too faint
+const BURNT_ORANGE: Color = Color::Rgb(0xcc, 0x55, 0x00);
 
 /// The themes selectable with --theme
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]

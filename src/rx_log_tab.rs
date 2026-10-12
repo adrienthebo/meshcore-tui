@@ -320,14 +320,14 @@ fn draw_fields(
     let table = Table::new(rows, widths)
         .header(header)
         .style(Style::default().fg(theme.text))
-        .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
+        .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg_alt))
         .block(block);
     f.render_stateful_widget(table, area, &mut TableState::default().with_selected(selected));
 }
 
 /// The packet in hex and ASCII, 16 bytes a row, with the selected field's bytes highlighted
 fn draw_hex(f: &mut Frame, layout: &PacketLayout, field: Option<&Field>, theme: &Theme, area: Rect) {
-    let highlight = Style::default().fg(theme.selected_fg).bg(theme.selected_bg);
+    let highlight = Style::default().fg(theme.selected_fg).bg(theme.selected_bg_alt);
     let selected = field.map_or(0..0, |field| field.offset..field.offset + field.len);
     let style = |at: usize| if selected.contains(&at) { highlight } else { Style::default().fg(theme.text) };
     let lines: Vec<Line> = layout
@@ -525,18 +525,25 @@ mod tests {
     #[test]
     fn hex_highlights_the_selected_fields_bytes() {
         let app = app_with_packets();
-        let backend = render(&app, &tab_on_channel_message_path(&app), 80, 24);
-        let buffer = backend.buffer();
+        // Vaporwave, where the field highlight differs from the browsed packet's
+        let theme = Theme::VAPORWAVE;
+        let tab = tab_on_channel_message_path(&app);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw_rx_log_tab(f, &app, &tab, &theme, f.area())).unwrap();
+        let buffer = terminal.backend().buffer();
         let row = (0..24).find(|&y| buffer[(1, y)].symbol() == "0" && buffer[(2, y)].symbol() == "0").unwrap();
         // Bytes 2-4 of the first row are the path: border, "0000  ", then 3 columns a byte
         let byte_x = |byte: u16| 1 + 6 + byte * 3;
         let bg = |x: u16| buffer[(x, row)].bg;
         assert_eq!(buffer[(byte_x(2), row)].symbol(), "A");
-        assert_eq!(bg(byte_x(2)), Theme::CLASSIC.selected_bg);
-        assert_eq!(bg(byte_x(3) - 1), Theme::CLASSIC.selected_bg, "gap inside the field");
-        assert_eq!(bg(byte_x(4) + 1), Theme::CLASSIC.selected_bg);
-        assert_ne!(bg(byte_x(2) - 1), Theme::CLASSIC.selected_bg, "gap before the field");
-        assert_ne!(bg(byte_x(5)), Theme::CLASSIC.selected_bg);
+        assert_eq!(bg(byte_x(2)), theme.selected_bg_alt);
+        assert_eq!(bg(byte_x(3) - 1), theme.selected_bg_alt, "gap inside the field");
+        assert_eq!(bg(byte_x(4) + 1), theme.selected_bg_alt);
+        assert_ne!(bg(byte_x(2) - 1), theme.selected_bg_alt, "gap before the field");
+        assert_ne!(bg(byte_x(5)), theme.selected_bg_alt);
+        // The browsed packet, the oldest of the three, keeps the usual selection colour
+        assert_eq!(buffer[(1, 4)].bg, theme.selected_bg);
+        assert_ne!(theme.selected_bg, theme.selected_bg_alt);
     }
 
     #[test]
