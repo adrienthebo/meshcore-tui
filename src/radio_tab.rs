@@ -81,7 +81,7 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
     let [signal, airtime, packets] = three_columns(readings);
     draw_signal(f, app, theme, signal);
     draw_airtime(f, app, theme, airtime);
-    f.render_widget(panel(theme, " Packets ", theme.radio_border), packets);
+    draw_packets(f, app, theme, packets);
 
     let [device, errors, settings] = three_columns(device);
     f.render_widget(panel(theme, " Device ", theme.radio_border), device);
@@ -164,6 +164,41 @@ fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Line::from_iter(totals),
     ];
     draw_readings(f, theme, title, rows, area);
+}
+
+/// A count with thousands separators, e.g. 1,204
+fn with_separators(n: u32) -> String {
+    let digits = n.to_string();
+    let mut text = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
+/// Packets received and sent since boot, by how they were routed
+fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let block = panel(theme, " Packets ", theme.radio_border);
+    let Some(packets) = app.diagnostics.packets else {
+        return waiting(f, theme, block, "waiting for diagnostics…", area);
+    };
+    let muted = Style::default().fg(theme.muted);
+    let row = |label: &'static str, rx: u32, tx: u32| {
+        Line::from(vec![
+            Span::styled(format!("{:<7}", label), muted),
+            value(theme, format!("{:>8}{:>8}", with_separators(rx), with_separators(tx))),
+        ])
+    };
+    let rows = vec![
+        Line::styled(format!("{:<7}{:>8}{:>8}", "", "rx", "tx"), muted),
+        row("flood", packets.flood_rx, packets.flood_tx),
+        row("direct", packets.direct_rx, packets.direct_tx),
+        row("total", packets.recv, packets.sent),
+    ];
+    f.render_widget(Paragraph::new(rows).block(block), area);
 }
 
 /// The time axis shared by both charts: the history up to now, in seconds.
@@ -353,6 +388,14 @@ mod tests {
         assert_eq!(duty_bar(0.0001, 10), "▏");
         assert_eq!(duty_bar(0.15, 10), "█▌");
         assert_eq!(duty_bar(2.0, 2), "██");
+    }
+
+    #[test]
+    fn counts_group_thousands() {
+        assert_eq!(with_separators(0), "0");
+        assert_eq!(with_separators(999), "999");
+        assert_eq!(with_separators(1_204), "1,204");
+        assert_eq!(with_separators(4_294_967_295), "4,294,967,295");
     }
 
     #[test]
