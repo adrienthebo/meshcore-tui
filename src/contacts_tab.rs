@@ -113,7 +113,7 @@ fn by_newest_advert(app: &App) -> Vec<&Contact> {
 /// Contact types from the firmware's ADV_TYPE_* (helpers/AdvertDataHelpers.h)
 pub fn contact_type_label(contact_type: u8) -> &'static str {
     match contact_type {
-        1 => "Chat",
+        1 => "Companion",
         2 => "Repeater",
         3 => "Room",
         4 => "Sensor",
@@ -176,7 +176,7 @@ fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme
         .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Fill(1),
-        Constraint::Length(8),
+        Constraint::Length(9),
         Constraint::Length(8),
         Constraint::Length(11),
         Constraint::Length(5),
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn contact_types_follow_the_firmware() {
         let labels: Vec<&str> = (0..=5).map(contact_type_label).collect();
-        assert_eq!(labels, ["?", "Chat", "Repeater", "Room", "Sensor", "?"]);
+        assert_eq!(labels, ["?", "Companion", "Repeater", "Room", "Sensor", "?"]);
     }
 
     #[test]

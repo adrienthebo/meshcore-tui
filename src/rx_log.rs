@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn adverts_split_into_their_fields_as_the_flags_say() {
-        // A chat node with a location (52.0089, -4.3531), both feature fields and a name
+        // A companion with a location (52.0089, -4.3531), both feature fields and a name
         let mut app_data = Vec::new();
         app_data.extend(52_008_900i32.to_le_bytes());
         app_data.extend((-4_353_100i32).to_le_bytes());
@@ -391,7 +391,7 @@ mod tests {
             field("public key", 0, 32, "abababab…"),
             field("timestamp", 32, 4, "2026-10-11 12:00:00 UTC"),
             field("signature", 36, 64, "64 bytes"),
-            field("flags", 100, 1, "Chat · location · feature 1 · feature 2 · name"),
+            field("flags", 100, 1, "Companion · location · feature 1 · feature 2 · name"),
             field("location", 101, 8, "52.0089, -4.3531"),
             field("feature 1", 109, 2, "0102"),
             field("feature 2", 111, 2, "0304"),
