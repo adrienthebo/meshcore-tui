@@ -134,7 +134,7 @@ impl PacketLayout {
             plural(header.path_hash_size.into(), "byte")
         ));
         let hops: Vec<String> = header.path.chunks(header.path_hash_size.into()).map(hex_encode).collect();
-        layout.push("path", &header.path, hops.join(" → "));
+        layout.push("path", &header.path, hops.join(","));
         match payload_parts(header.payload_type, &log.payload) {
             Some(parts) => {
                 for (name, bytes, value) in parts {
@@ -342,7 +342,7 @@ mod tests {
             ("header", 0, 1, "route t-direct · type ACK · ver 1"),
             ("transport code", 1, 4, "01020304"),
             ("path len", 5, 1, "2 hops × 2 bytes"),
-            ("path", 6, 4, "aabb → ccdd"),
+            ("path", 6, 4, "aabb,ccdd"),
             ("payload", 10, 1, "1 byte"),
         ]);
     }
