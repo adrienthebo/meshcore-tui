@@ -209,8 +209,6 @@ const SIGNATURE_LEN: usize = 64;
 const FLAGS_LEN: usize = 1;
 const COORDINATE_LEN: usize = 4;
 const FEATURE_LEN: usize = 2;
-/// Bytes of the public key shown, enough to tell adverts apart
-const KEY_SHOWN: usize = 4;
 
 /// The advert flags (ADV_*_MASK in AdvertDataHelpers.h) that say which app data fields follow
 const ADV_TYPE_MASK: u8 = 0x0f;
@@ -229,7 +227,7 @@ fn advert_parts(payload: &[u8]) -> Option<Parts<'_>> {
     let signature = take(&mut rest, SIGNATURE_LEN)?;
     let flags = take(&mut rest, FLAGS_LEN)?;
     let mut parts = vec![
-        ("public key", key, format!("{}…", hex_encode(&key[..KEY_SHOWN]))),
+        ("public key", key, hex_encode(key)),
         ("timestamp", timestamp, utc_time(u32::from_le_bytes(timestamp.try_into().ok()?))),
         ("signature", signature, plural(signature.len(), "byte")),
         ("flags", flags, advert_flags_label(flags[0])),
@@ -397,7 +395,7 @@ mod tests {
         app_data.extend([0x01, 0x02, 0x03, 0x04]);
         app_data.extend("Zoë 🖖".as_bytes());
         assert_eq!(payload_fields(PayloadType::Advert, advert_payload(0xf1, &app_data)), [
-            field("public key", 0, 32, "abababab…"),
+            field("public key", 0, 32, &"ab".repeat(32)),
             field("timestamp", 32, 4, "2026-10-11 12:00:00 UTC"),
             field("signature", 36, 64, "64 bytes"),
             field("flags", 100, 1, "Companion · location · feature 1 · feature 2 · name"),
