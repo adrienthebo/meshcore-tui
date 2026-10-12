@@ -1,8 +1,8 @@
 ---
 source: src/ui.rs
-expression: "render_panel(60, 4, |f, area| draw_packets(f, &app, area))"
+expression: "render_panel(60, 4, |f, area|\ndraw_packets(f, &app, &Theme::CLASSIC, false, area))"
 ---
-"╭ Received Packets ────────────────────────────────────────╮"
+"╭ Activity ────────────────────────────────────────────────╮"
 "│12:34:56 [ACK] H:0 | no signal                            │"
 "│12:34:56 [ADV] H:1 R:-92dBm S:5.2dB | heard               │"
 "╰──────────────────────────────────────────────────────────╯"

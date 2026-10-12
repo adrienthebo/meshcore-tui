@@ -316,7 +316,7 @@ pub fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area
     } else {
         theme.packets_border
     };
-    let w = List::new(items).block(panel(theme, " Received Packets ", pc));
+    let w = List::new(items).block(panel(theme, " Activity ", pc));
     f.render_widget(w, area);
 }
 

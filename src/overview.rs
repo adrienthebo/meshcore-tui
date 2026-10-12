@@ -137,13 +137,13 @@ impl View for ContactList {
     }
 }
 
-/// Packets heard and sent, newest at the bottom
+/// Radio events: adverts, ACKs, route changes and sent DMs, newest at the bottom
 #[derive(Debug, Default)]
 pub struct PacketLog;
 
 impl View for PacketLog {
     fn title(&self) -> &str {
-        "Packets"
+        "Activity"
     }
 
     fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool) {
