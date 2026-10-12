@@ -27,7 +27,7 @@ const HEX_ROW_BYTES: usize = 16;
 const PACKETS_MIN: u16 = 6;
 
 /// Every packet the radio received over the air, newest first, above the
-/// browsed packet's fields and a hex dump of its bytes
+/// fields and a hex dump of the browsed packet, or of the newest when none is
 #[derive(Debug, Default)]
 pub struct RxLogTab {
     focus: Section,
@@ -56,17 +56,26 @@ impl View for RxLogTab {
         draw_rx_log_tab(f, app, self, theme, area);
     }
 
-    /// ↑↓ browse packets, or pick a field of the browsed packet; Tab moves
-    /// between them once a packet is browsed
+    /// ↑↓ browse packets, or pick a field of the browsed packet; ↑ past the
+    /// newest packet or Home goes back to following the newest. Tab moves
+    /// between packets and fields, browsing the packet on show.
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match (key.code, &self.focus) {
-            (KeyCode::Tab, Section::Packets) if self.browsed_packet(app).is_some() => self.focus = Section::Fields,
+            (KeyCode::Home, _) => self.follow_newest(),
+            (KeyCode::Tab, Section::Packets) => {
+                // Hold the packet on show still, so its fields don't change under the selection
+                let Some(packet) = self.shown_packet(app) else {
+                    return KeyResult::Ignored;
+                };
+                self.browsed = Some(packet.id);
+                self.focus = Section::Fields;
+            }
             (KeyCode::Tab, Section::Fields) => self.focus = Section::Packets,
             (KeyCode::Up, Section::Packets) => self.browse(app, Step::Up),
             (KeyCode::Down, Section::Packets) => self.browse(app, Step::Down),
             (KeyCode::Up, Section::Fields) => self.field = self.field.saturating_sub(1),
             (KeyCode::Down, Section::Fields) => {
-                let fields = self.browsed_layout(app).map_or(0, |layout| layout.fields.len());
+                let fields = self.shown_layout(app).map_or(0, |layout| layout.fields.len());
                 self.field = (self.field + 1).min(fields.saturating_sub(1));
             }
             _ => return KeyResult::Ignored,
@@ -75,9 +84,10 @@ impl View for RxLogTab {
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
-        match self.focus {
-            Section::Packets => vec!["↑↓=browse", "Tab=panel"],
-            Section::Fields => vec!["↑↓=field", "Tab=panel"],
+        match (&self.focus, self.browsed) {
+            (Section::Packets, None) => vec!["↓=browse", "Tab=panel"],
+            (Section::Packets, Some(_)) => vec!["↑↓=browse", "Home=newest", "Tab=panel"],
+            (Section::Fields, _) => vec!["↑↓=field", "Home=newest", "Tab=panel"],
         }
     }
 }
@@ -88,18 +98,28 @@ enum Step {
 }
 
 impl RxLogTab {
-    /// Move the browsed packet, starting from the newest when none is browsed;
-    /// the newly browsed packet starts at its first field
+    /// Move the browsed packet: ↓ from following the newest browses it, and ↑
+    /// from the newest goes back to following. A newly browsed packet starts at
+    /// its first field.
     fn browse(&mut self, app: &App, step: Step) {
         let Some(last) = app.rx_log.packets.len().checked_sub(1) else {
             return;
         };
         let row = match (self.browsed_row(app), step) {
-            (None, _) => 0,
-            (Some(row), Step::Up) => row.saturating_sub(1),
+            (None, Step::Up) => return,
+            (None, Step::Down) => 0,
+            (Some(0), Step::Up) => return self.follow_newest(),
+            (Some(row), Step::Up) => row - 1,
             (Some(row), Step::Down) => (row + 1).min(last),
         };
         self.browsed = newest_first(app).nth(row).map(|p| p.id);
+        self.field = 0;
+    }
+
+    /// Stop browsing, so the fields show each packet as it arrives
+    fn follow_newest(&mut self) {
+        self.browsed = None;
+        self.focus = Section::Packets;
         self.field = 0;
     }
 
@@ -113,8 +133,13 @@ impl RxLogTab {
         newest_first(app).nth(self.browsed_row(app)?)
     }
 
-    fn browsed_layout(&self, app: &App) -> Option<PacketLayout> {
-        PacketLayout::of(&self.browsed_packet(app)?.log)
+    /// The packet the fields show: the browsed one, else the newest
+    fn shown_packet<'a>(&self, app: &'a App) -> Option<&'a RxPacket> {
+        self.browsed_packet(app).or_else(|| app.rx_log.packets.back())
+    }
+
+    fn shown_layout(&self, app: &App) -> Option<PacketLayout> {
+        PacketLayout::of(&self.shown_packet(app)?.log)
     }
 }
 
@@ -151,13 +176,16 @@ fn packet_row(packet: &RxPacket) -> Row<'static> {
     ])
 }
 
-/// The Packets table, and once a packet is browsed its Fields under it, then
-/// its Hex dump when there's room for it
+/// The Packets table above the Fields of the browsed packet, or of the newest
+/// when none is browsed, then its Hex dump when there's room for it
 fn draw_rx_log_tab(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: Rect) {
-    let Some(packet) = tab.browsed_packet(app) else {
+    let Some(packet) = tab.shown_packet(app) else {
         return draw_packets(f, app, tab, theme, area);
     };
     let layout = PacketLayout::of(&packet.log);
+    // Following the newest packet selects no field, since the fields change with each packet
+    let browsing = tab.browsed_packet(app).is_some();
+    let selected = layout.as_ref().filter(|_| browsing).and_then(|l| l.fields.get(tab.field));
     // Borders and the header row around the fields, or the one line saying they can't be shown
     let fields_height = layout.as_ref().map_or(1, |l| l.fields.len() as u16 + 1) + 2;
     let hex_height = layout
@@ -168,9 +196,10 @@ fn draw_rx_log_tab(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area
     constraints.extend(hex_height.map(Constraint::Length));
     let chunks = Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
     draw_packets(f, app, tab, theme, chunks[0]);
-    draw_fields(f, layout.as_ref(), tab, theme, chunks[1]);
+    let title = if browsing { " Fields " } else { " Fields · newest " };
+    draw_fields(f, layout.as_ref(), browsing.then_some(tab.field), title, tab, theme, chunks[1]);
     if let (Some(layout), Some(_)) = (&layout, hex_height) {
-        draw_hex(f, layout, layout.fields.get(tab.field), theme, chunks[2]);
+        draw_hex(f, layout, selected, theme, chunks[2]);
     }
 }
 
@@ -216,8 +245,16 @@ fn bytes_preview(bytes: &[u8]) -> String {
     preview.join(" ")
 }
 
-fn draw_fields(f: &mut Frame, layout: Option<&PacketLayout>, tab: &RxLogTab, theme: &Theme, area: Rect) {
-    let block = panel(theme, " Fields ", focus_border(tab, Section::Fields, theme.radio_border, theme));
+fn draw_fields(
+    f: &mut Frame,
+    layout: Option<&PacketLayout>,
+    selected: Option<usize>,
+    title: &str,
+    tab: &RxLogTab,
+    theme: &Theme,
+    area: Rect,
+) {
+    let block = panel(theme, title, focus_border(tab, Section::Fields, theme.radio_border, theme));
     let Some(layout) = layout else {
         let text = "Can't show its bytes: no packet, or a payload type meshcore-rs doesn't know";
         f.render_widget(Paragraph::new(text).style(Style::default().fg(theme.muted)).block(block), area);
@@ -243,7 +280,7 @@ fn draw_fields(f: &mut Frame, layout: Option<&PacketLayout>, tab: &RxLogTab, the
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
         .block(block);
-    f.render_stateful_widget(table, area, &mut TableState::default().with_selected(Some(tab.field)));
+    f.render_stateful_widget(table, area, &mut TableState::default().with_selected(selected));
 }
 
 /// The packet in hex and ASCII, 16 bytes a row, with the selected field's bytes highlighted
@@ -327,7 +364,43 @@ mod tests {
 
     #[test]
     fn packets_newest_first() {
-        insta::assert_snapshot!(render(&app_with_packets(), &RxLogTab::default(), 80, 7));
+        let mut terminal = Terminal::new(TestBackend::new(80, 7)).unwrap();
+        let app = app_with_packets();
+        terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn fields_follow_the_newest_packet_until_one_is_browsed() {
+        let (tab, mut app) = (RxLogTab::default(), app_with_packets());
+        app.rx_log.record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
+        let backend = render(&app, &tab, 80, 24);
+        let text = screen_text(&backend);
+        assert!(text.contains(" Fields · newest "));
+        assert!(text.contains("channel hash"));
+        // Nothing is selected while following: no packet row, field or bytes
+        assert!(backend.buffer().content().iter().all(|cell| cell.bg != Theme::CLASSIC.selected_bg));
+        app.rx_log.record("12:00:05".to_string(), advert_log("Hilltop"));
+        assert!(screen_text(&render(&app, &tab, 80, 24)).contains("public key"));
+    }
+
+    #[test]
+    fn home_and_up_past_the_newest_go_back_to_following_it() {
+        let (mut tab, app) = (RxLogTab::default(), app_with_packets());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(tab.key_hints(), ["↑↓=browse", "Home=newest", "Tab=panel"]);
+        assert_eq!(press(&mut tab, &app, KeyCode::Home), KeyResult::Handled);
+        assert_eq!(tab.browsed, None);
+        assert_eq!(tab.key_hints(), ["↓=browse", "Tab=panel"]);
+        // From the fields too, which hand focus back to the packets
+        let mut tab = tab_on_channel_message_path(&app);
+        press(&mut tab, &app, KeyCode::Home);
+        assert_eq!((tab.browsed, &tab.focus, tab.field), (None, &Section::Packets, 0));
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Up);
+        assert_eq!(tab.browsed, None);
+        assert!(screen_text(&render(&app, &tab, 80, 24)).contains(" Fields · newest "));
     }
 
     #[test]
@@ -382,15 +455,21 @@ mod tests {
     }
 
     #[test]
-    fn tab_moves_to_the_fields_once_a_packet_is_browsed() {
-        let (mut tab, app) = (RxLogTab::default(), app_with_packets());
+    fn tab_moves_to_the_fields_browsing_the_packet_on_show() {
+        let (mut tab, app) = (RxLogTab::default(), App::new(0));
         assert_eq!(press(&mut tab, &app, KeyCode::Tab), KeyResult::Ignored);
-        press(&mut tab, &app, KeyCode::Down);
-        assert_eq!(tab.key_hints(), ["↑↓=browse", "Tab=panel"]);
+        let app = app_with_packets();
         assert_eq!(press(&mut tab, &app, KeyCode::Tab), KeyResult::Handled);
-        assert_eq!(tab.key_hints(), ["↑↓=field", "Tab=panel"]);
+        // The newest, which the fields were following
+        assert_eq!(tab.browsed, Some(2));
+        assert_eq!(tab.key_hints(), ["↑↓=field", "Home=newest", "Tab=panel"]);
         press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.focus, Section::Packets);
+        // A browsed packet keeps its selected field through Tab and back
+        let mut tab = tab_on_channel_message_path(&app);
+        press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Tab);
+        assert_eq!((tab.browsed, tab.field), (Some(0), 2));
     }
 
     #[test]
@@ -429,10 +508,14 @@ mod tests {
             press(&mut tab, &app, KeyCode::Down);
         }
         assert_eq!(tab.browsed, Some(0));
-        for _ in 0..5 {
-            press(&mut tab, &app, KeyCode::Up);
-        }
+        press(&mut tab, &app, KeyCode::Up);
+        press(&mut tab, &app, KeyCode::Up);
         assert_eq!(tab.browsed, Some(2));
+        // Past the newest is following it, and ↑ there does nothing more
+        press(&mut tab, &app, KeyCode::Up);
+        assert_eq!(tab.browsed, None);
+        assert_eq!(press(&mut tab, &app, KeyCode::Up), KeyResult::Handled);
+        assert_eq!(tab.browsed, None);
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
     }
 
