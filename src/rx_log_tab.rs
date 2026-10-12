@@ -366,8 +366,8 @@ mod tests {
     fn hex_is_left_out_when_the_tab_is_short() {
         let app = app_with_packets();
         let tab = tab_on_channel_message_path(&app);
-        assert!(screen_text(&render(&app, &tab, 80, 19)).contains(" Hex "));
-        let short = screen_text(&render(&app, &tab, 80, 18));
+        assert!(screen_text(&render(&app, &tab, 80, 21)).contains(" Hex "));
+        let short = screen_text(&render(&app, &tab, 80, 20));
         assert!(!short.contains(" Hex "));
         assert!(short.contains(" Fields "));
     }
@@ -401,8 +401,8 @@ mod tests {
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Down);
         }
-        // Header, path len, path, payload
-        assert_eq!(tab.field, 3);
+        // Header, path len, path, channel hash, mac, ciphertext
+        assert_eq!(tab.field, 5);
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Up);
         }

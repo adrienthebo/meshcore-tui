@@ -1,8 +1,12 @@
 use std::collections::VecDeque;
 
+use chrono::DateTime;
 use meshcore_rs::events::{LogData, MeshPacketHeader};
 use meshcore_rs::parsing::hex_encode;
 use meshcore_rs::{PayloadType, RouteType};
+
+use crate::contacts_tab::contact_type_label;
+use crate::text::sanitize;
 
 /// Packets kept for the RX Log tab
 pub const RX_LOG_LEN: usize = 5000;
@@ -131,7 +135,14 @@ impl PacketLayout {
         ));
         let hops: Vec<String> = header.path.chunks(header.path_hash_size.into()).map(hex_encode).collect();
         layout.push("path", &header.path, hops.join(" → "));
-        layout.push("payload", &log.payload, plural(log.payload.len(), "byte"));
+        match payload_parts(header.payload_type, &log.payload) {
+            Some(parts) => {
+                for (name, bytes, value) in parts {
+                    layout.push(name, bytes, value);
+                }
+            }
+            None => layout.push("payload", &log.payload, plural(log.payload.len(), "byte")),
+        }
         Some(layout)
     }
 
@@ -142,6 +153,116 @@ impl PacketLayout {
         }
         self.fields.push(Field { name, offset: self.bytes.len(), len: bytes.len(), value });
         self.bytes.extend_from_slice(bytes);
+    }
+}
+
+/// A payload's fields front to back, as (name, bytes, value)
+type Parts<'a> = Vec<(&'static str, &'a [u8], String)>;
+
+/// The fields of a payload whose type has a known layout; None for other
+/// types, or a payload that doesn't fit its type's layout
+fn payload_parts(payload_type: PayloadType, payload: &[u8]) -> Option<Parts<'_>> {
+    match payload_type {
+        PayloadType::GroupText | PayloadType::GroupData => group_parts(payload),
+        PayloadType::Advert => advert_parts(payload),
+        _ => None,
+    }
+}
+
+/// Split the first `len` bytes off `rest`; None when there aren't that many
+fn take<'a>(rest: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
+    let (head, tail) = rest.split_at_checked(len)?;
+    *rest = tail;
+    Some(head)
+}
+
+/// Bytes in a channel datagram's channel hash and MAC (MeshCore.h)
+const CHANNEL_HASH_LEN: usize = 1;
+const MAC_LEN: usize = 2;
+
+/// A channel datagram (Mesh::createGroupDatagram): the channel hash, then the
+/// MAC and ciphertext Utils::encryptThenMAC writes
+fn group_parts(payload: &[u8]) -> Option<Parts<'_>> {
+    let mut rest = payload;
+    let hash = take(&mut rest, CHANNEL_HASH_LEN)?;
+    let mac = take(&mut rest, MAC_LEN)?;
+    Some(vec![
+        ("channel hash", hash, hex_encode(hash)),
+        ("mac", mac, hex_encode(mac)),
+        ("ciphertext", rest, format!("{}, encrypted", plural(rest.len(), "byte"))),
+    ])
+}
+
+/// Bytes in an advert's fields (MeshCore.h, AdvertDataHelpers.cpp)
+const PUB_KEY_LEN: usize = 32;
+const TIMESTAMP_LEN: usize = 4;
+const SIGNATURE_LEN: usize = 64;
+const FLAGS_LEN: usize = 1;
+const COORDINATE_LEN: usize = 4;
+const FEATURE_LEN: usize = 2;
+/// Bytes of the public key shown, enough to tell adverts apart
+const KEY_SHOWN: usize = 4;
+
+/// The advert flags (ADV_*_MASK in AdvertDataHelpers.h) that say which app data fields follow
+const ADV_TYPE_MASK: u8 = 0x0f;
+const ADV_LATLON_MASK: u8 = 0x10;
+const ADV_FEAT1_MASK: u8 = 0x20;
+const ADV_FEAT2_MASK: u8 = 0x40;
+const ADV_NAME_MASK: u8 = 0x80;
+
+/// An advert (Mesh::createAdvert): key, timestamp and signature, then app
+/// data whose flags say which of a location, two feature fields and a name
+/// follow (AdvertDataBuilder::encodeTo)
+fn advert_parts(payload: &[u8]) -> Option<Parts<'_>> {
+    let mut rest = payload;
+    let key = take(&mut rest, PUB_KEY_LEN)?;
+    let timestamp = take(&mut rest, TIMESTAMP_LEN)?;
+    let signature = take(&mut rest, SIGNATURE_LEN)?;
+    let flags = take(&mut rest, FLAGS_LEN)?;
+    let mut parts = vec![
+        ("public key", key, format!("{}…", hex_encode(&key[..KEY_SHOWN]))),
+        ("timestamp", timestamp, utc_time(u32::from_le_bytes(timestamp.try_into().ok()?))),
+        ("signature", signature, plural(signature.len(), "byte")),
+        ("flags", flags, advert_flags_label(flags[0])),
+    ];
+    if flags[0] & ADV_LATLON_MASK != 0 {
+        let location = take(&mut rest, 2 * COORDINATE_LEN)?;
+        let (lat, lon) = location.split_at(COORDINATE_LEN);
+        let degrees = |bytes: &[u8]| i32::from_le_bytes(bytes.try_into().unwrap_or_default()) as f64 / 1e6;
+        parts.push(("location", location, format!("{:.4}, {:.4}", degrees(lat), degrees(lon))));
+    }
+    for (mask, name) in [(ADV_FEAT1_MASK, "feature 1"), (ADV_FEAT2_MASK, "feature 2")] {
+        if flags[0] & mask != 0 {
+            let feature = take(&mut rest, FEATURE_LEN)?;
+            parts.push((name, feature, hex_encode(feature)));
+        }
+    }
+    if flags[0] & ADV_NAME_MASK != 0 {
+        parts.push(("name", rest, sanitize(&String::from_utf8_lossy(rest))));
+    } else if !rest.is_empty() {
+        return None;
+    }
+    Some(parts)
+}
+
+/// The advertiser's type, then the app data fields its flags say follow
+fn advert_flags_label(flags: u8) -> String {
+    let mut labels = vec![contact_type_label(flags & ADV_TYPE_MASK)];
+    let fields = [
+        (ADV_LATLON_MASK, "location"),
+        (ADV_FEAT1_MASK, "feature 1"),
+        (ADV_FEAT2_MASK, "feature 2"),
+        (ADV_NAME_MASK, "name"),
+    ];
+    labels.extend(fields.iter().filter(|(mask, _)| flags & mask != 0).map(|(_, label)| *label));
+    labels.join(" · ")
+}
+
+/// A sender's clock reading in Unix seconds, in UTC
+fn utc_time(secs: u32) -> String {
+    match DateTime::from_timestamp(secs.into(), 0) {
+        Some(time) => time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        None => secs.to_string(),
     }
 }
 
@@ -232,6 +353,74 @@ mod tests {
         let names: Vec<&str> = layout.fields.iter().map(|f| f.name).collect();
         assert_eq!(names, ["header", "path len", "payload"]);
         assert_eq!(layout.fields[1].value, "0 hops × 1 byte");
+    }
+
+    /// The payload's fields of a flood packet with no hops, as (name, offset in the payload, length, value)
+    fn payload_fields(payload_type: PayloadType, payload: Vec<u8>) -> Vec<(&'static str, usize, usize, String)> {
+        let log = LogData { header: Some(flood_header(payload_type, &[])), payload, ..Default::default() };
+        let layout = PacketLayout::of(&log).unwrap();
+        // The header byte and path byte come first
+        layout.fields.into_iter().skip(2).map(|f| (f.name, f.offset - 2, f.len, f.value)).collect()
+    }
+
+    fn field(name: &'static str, offset: usize, len: usize, value: &str) -> (&'static str, usize, usize, String) {
+        (name, offset, len, value.to_string())
+    }
+
+    #[test]
+    fn channel_datagrams_split_into_hash_mac_and_ciphertext() {
+        let payload = vec![0xd9, 0x4e, 0x0b, 1, 2, 3, 4, 5];
+        let expected = [
+            field("channel hash", 0, 1, "d9"),
+            field("mac", 1, 2, "4e0b"),
+            field("ciphertext", 3, 5, "5 bytes, encrypted"),
+        ];
+        assert_eq!(payload_fields(PayloadType::GroupText, payload.clone()), expected);
+        assert_eq!(payload_fields(PayloadType::GroupData, payload), expected);
+    }
+
+    #[test]
+    fn adverts_split_into_their_fields_as_the_flags_say() {
+        // A chat node with a location (52.0089, -4.3531), both feature fields and a name
+        let mut app_data = Vec::new();
+        app_data.extend(52_008_900i32.to_le_bytes());
+        app_data.extend((-4_353_100i32).to_le_bytes());
+        app_data.extend([0x01, 0x02, 0x03, 0x04]);
+        app_data.extend("Zoë 🖖".as_bytes());
+        assert_eq!(payload_fields(PayloadType::Advert, advert_payload(0xf1, &app_data)), [
+            field("public key", 0, 32, "abababab…"),
+            field("timestamp", 32, 4, "2026-10-11 12:00:00 UTC"),
+            field("signature", 36, 64, "64 bytes"),
+            field("flags", 100, 1, "Chat · location · feature 1 · feature 2 · name"),
+            field("location", 101, 8, "52.0089, -4.3531"),
+            field("feature 1", 109, 2, "0102"),
+            field("feature 2", 111, 2, "0304"),
+            field("name", 113, 9, "Zoë 🖖"),
+        ]);
+    }
+
+    #[test]
+    fn adverts_without_app_data_fields_end_at_the_flags() {
+        let fields = payload_fields(PayloadType::Advert, advert_payload(0x02, &[]));
+        assert_eq!(fields.last().unwrap(), &field("flags", 100, 1, "Repeater"));
+    }
+
+    #[test]
+    fn payloads_that_dont_fit_their_layout_stay_one_field() {
+        let one_field = |payload_type, payload: Vec<u8>| {
+            let len = payload.len();
+            assert_eq!(payload_fields(payload_type, payload), [field("payload", 0, len, &plural(len, "byte"))]);
+        };
+        // Too short for a channel hash and MAC
+        one_field(PayloadType::GroupText, vec![0xd9, 0x4e]);
+        // Cut off inside the signature
+        one_field(PayloadType::Advert, advert_payload(0x82, b"x")[..60].to_vec());
+        // Says it has a location, but ends first
+        one_field(PayloadType::Advert, advert_payload(0x10, &[1, 2, 3]));
+        // Bytes after the app data its flags announce
+        one_field(PayloadType::Advert, advert_payload(0x02, &[0xff]));
+        // A type without a known layout
+        one_field(PayloadType::Ack, vec![1, 2, 3, 4]);
     }
 
     #[test]

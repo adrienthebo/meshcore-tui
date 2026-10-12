@@ -111,7 +111,7 @@ fn by_newest_advert(app: &App) -> Vec<&Contact> {
 }
 
 /// Contact types from the firmware's ADV_TYPE_* (helpers/AdvertDataHelpers.h)
-fn contact_type_label(contact_type: u8) -> &'static str {
+pub fn contact_type_label(contact_type: u8) -> &'static str {
     match contact_type {
         1 => "Chat",
         2 => "Repeater",

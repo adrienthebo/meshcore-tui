@@ -118,7 +118,18 @@ pub fn group_text_log(path: &[u8], payload_len: usize) -> LogData {
     }
 }
 
-/// An advert from `name`, heard over two hops
+/// An advert's payload: key, timestamp (2026-10-11 12:00:00 UTC), signature,
+/// then `flags` and the app data after them
+pub fn advert_payload(flags: u8, app_data: &[u8]) -> Vec<u8> {
+    let mut payload = vec![0xab; 32];
+    payload.extend(1_791_720_000u32.to_le_bytes());
+    payload.extend([0x51; 64]);
+    payload.push(flags);
+    payload.extend(app_data);
+    payload
+}
+
+/// An advert from the repeater `name`, heard over two hops
 pub fn advert_log(name: &str) -> LogData {
     LogData {
         snr: -2.75,
@@ -133,7 +144,8 @@ pub fn advert_log(name: &str) -> LogData {
             lon: None,
             name: Some(name.to_string()),
         }),
-        payload: vec![0; 101],
+        // A repeater with a name
+        payload: advert_payload(0x82, name.as_bytes()),
     }
 }
 
