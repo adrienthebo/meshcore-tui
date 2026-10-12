@@ -388,7 +388,7 @@ pub fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     f.render_widget(sparkline, rows[1]);
 
     let muted = Style::default().fg(theme.muted);
-    let rssi_colour = theme.quality(rssi_quality(latest.last_rssi));
+    let rssi_colour = theme.quality(rssi_quality(latest.last_rssi.into()));
     let snr_colour = theme.quality(snr_quality(latest.last_snr));
     let footer = Line::from(vec![
         Span::styled("RSSI ", muted),
@@ -414,7 +414,7 @@ fn quality(value: f32, poor: f32, good: f32) -> f32 {
 }
 
 /// RSSI from the edge of LoRa reception up to a strong local signal
-fn rssi_quality(dbm: i8) -> f32 {
+pub fn rssi_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -120.0, -60.0)
 }
 

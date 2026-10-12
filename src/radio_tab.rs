@@ -12,7 +12,8 @@ use ratatui::{
 use crate::app::App;
 use crate::stats::HISTORY_SECS;
 use crate::theme::Theme;
-use crate::ui::{noise_quality, panel, snr_quality};
+use crate::text::format_duration;
+use crate::ui::{noise_quality, panel, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
 /// Rows for the two rows of reading panels under the charts
@@ -78,14 +79,91 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
     draw_snr_chart(f, app, theme, now, snr);
 
     let [signal, airtime, packets] = three_columns(readings);
-    f.render_widget(panel(theme, " Signal ", theme.radio_border), signal);
-    f.render_widget(panel(theme, " Airtime ", theme.radio_border), airtime);
+    draw_signal(f, app, theme, signal);
+    draw_airtime(f, app, theme, airtime);
     f.render_widget(panel(theme, " Packets ", theme.radio_border), packets);
 
     let [device, errors, settings] = three_columns(device);
     f.render_widget(panel(theme, " Device ", theme.radio_border), device);
     f.render_widget(panel(theme, " Errors (since boot) ", theme.radio_border), errors);
     f.render_widget(panel(theme, " Settings ", theme.radio_border), settings);
+}
+
+/// Shown in place of a reading the radio hasn't sent yet
+const UNKNOWN: &str = "—";
+
+/// Width of the Signal panel's labels, so its values line up
+const SIGNAL_LABEL_WIDTH: usize = 10;
+
+/// A reading: its label, muted and padded to `width`, then its value
+fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> [Span<'a>; 2] {
+    [Span::styled(format!("{:<width$}", label), Style::default().fg(theme.muted)), value]
+}
+
+fn value<'a>(theme: &Theme, text: impl Into<std::borrow::Cow<'a, str>>) -> Span<'a> {
+    Span::styled(text, Style::default().fg(theme.value))
+}
+
+fn draw_readings(f: &mut Frame, theme: &Theme, title: impl Into<Line<'static>>, rows: Vec<Line>, area: Rect) {
+    f.render_widget(Paragraph::new(rows).block(panel(theme, title, theme.radio_border)), area);
+}
+
+/// The last packet's signal, and how many packets wait to go out
+fn draw_signal(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let last = app.radio_stats.packet_signals.back();
+    let rssi = match last {
+        Some(p) => Span::styled(format!("{} dBm", p.rssi), Style::default().fg(theme.quality(rssi_quality(p.rssi)))),
+        None => value(theme, UNKNOWN),
+    };
+    let snr = match last {
+        Some(p) => Span::styled(format!("{:.2} dB", p.snr), Style::default().fg(theme.quality(snr_quality(p.snr)))),
+        None => value(theme, UNKNOWN),
+    };
+    let queue = app.diagnostics.core.map_or(UNKNOWN.to_string(), |core| core.queue_len.to_string());
+    let rows = vec![
+        Line::from_iter(reading(theme, "Last RSSI", SIGNAL_LABEL_WIDTH, rssi)),
+        Line::from_iter(reading(theme, "Last SNR", SIGNAL_LABEL_WIDTH, snr)),
+        Line::from_iter(reading(theme, "TX queue", SIGNAL_LABEL_WIDTH, value(theme, queue))),
+    ];
+    draw_readings(f, theme, " Signal ", rows, area);
+}
+
+/// Seconds on air as a share of uptime; None before the radio has been up a second
+fn duty_cycle(air_secs: u32, uptime_secs: u32) -> Option<f64> {
+    (uptime_secs > 0).then(|| air_secs as f64 / uptime_secs as f64)
+}
+
+/// A bar `width` cells long at 100%, in eighths of a cell; anything above zero shows
+fn duty_bar(fraction: f64, width: usize) -> String {
+    const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    let eighths = (fraction.clamp(0.0, 1.0) * width as f64 * 8.0).round() as usize;
+    let eighths = if fraction > 0.0 { eighths.max(1) } else { 0 };
+    format!("{}{}", "█".repeat(eighths / 8), EIGHTHS[eighths % 8])
+}
+
+/// Time on air since the radio booted, as a share of its uptime and in total
+fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let uptime = app.diagnostics.core.map(|core| core.uptime_secs);
+    let title = match uptime {
+        Some(secs) => format!(" Airtime (up {}) ", format_duration(secs)),
+        None => " Airtime ".to_string(),
+    };
+    let Some(stats) = app.radio_stats.latest else {
+        return waiting(f, theme, panel(theme, title, theme.radio_border), "waiting for radio stats…", area);
+    };
+    let share = |air_secs: u32| match uptime.and_then(|up| duty_cycle(air_secs, up)) {
+        Some(fraction) => format!("{:>5.1}%  {}", fraction * 100.0, duty_bar(fraction, 10)),
+        None => UNKNOWN.to_string(),
+    };
+    let totals = reading(theme, "TX ", 3, value(theme, format_duration(stats.tx_air_secs)))
+        .into_iter()
+        .chain(reading(theme, "  RX ", 5, value(theme, format_duration(stats.rx_air_secs))));
+    let rows = vec![
+        Line::from_iter(reading(theme, "TX", 3, value(theme, share(stats.tx_air_secs)))),
+        Line::from_iter(reading(theme, "RX", 3, value(theme, share(stats.rx_air_secs)))),
+        Line::from_iter(totals),
+    ];
+    draw_readings(f, theme, title, rows, area);
 }
 
 /// The time axis shared by both charts: the history up to now, in seconds.
@@ -235,6 +313,7 @@ mod tests {
         for (ago, snr) in [(600, -9.0), (420, -2.5), (300, 4.0), (120, 7.25), (5, 5.25)] {
             app.radio_stats.record_packet(PacketSignal { at: NOW - ago, snr, rssi: -90 });
         }
+        app.diagnostics.record(diagnostics_reading());
         app
     }
 
@@ -260,6 +339,20 @@ mod tests {
         assert_eq!(chart_heights(18), (14, 0));
         assert_eq!(chart_heights(21), (14, 7));
         assert_eq!(chart_heights(70), (14, 14));
+    }
+
+    #[test]
+    fn duty_cycle_needs_uptime() {
+        assert_eq!(duty_cycle(12, 0), None);
+        assert_eq!(duty_cycle(30, 600), Some(0.05));
+    }
+
+    #[test]
+    fn duty_bars_fill_in_eighths_and_show_any_airtime() {
+        assert_eq!(duty_bar(0.0, 10), "");
+        assert_eq!(duty_bar(0.0001, 10), "▏");
+        assert_eq!(duty_bar(0.15, 10), "█▌");
+        assert_eq!(duty_bar(2.0, 2), "██");
     }
 
     #[test]
