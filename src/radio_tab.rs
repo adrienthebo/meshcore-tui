@@ -17,10 +17,8 @@ use crate::view::{KeyResult, View};
 
 /// Rows for the two rows of reading panels under the charts
 const PANEL_ROWS: u16 = 12;
-/// Tallest the noise floor chart gets; past this a taller chart shows nothing more
-const NOISE_CHART_MAX: u16 = 16;
-/// Tallest the SNR chart gets
-const SNR_CHART_MAX: u16 = 12;
+/// Tallest each chart gets; past this a taller chart shows nothing more
+const CHART_MAX: u16 = 14;
 /// Shortest chart worth drawing: borders, two axis rows and one row of data
 const CHART_MIN: u16 = 5;
 
@@ -46,8 +44,8 @@ impl View for RadioTab {
 /// Heights of the noise floor and SNR charts in `rows`; the SNR chart gives up
 /// its rows first, and a chart too short to read is left out
 fn chart_heights(rows: u16) -> (u16, u16) {
-    let noise = rows.min(NOISE_CHART_MAX);
-    let snr = (rows - noise).min(SNR_CHART_MAX);
+    let noise = rows.min(CHART_MAX);
+    let snr = (rows - noise).min(CHART_MAX);
     let readable = |height: u16| if height < CHART_MIN { 0 } else { height };
     (readable(noise), readable(snr))
 }
@@ -255,9 +253,9 @@ mod tests {
     fn charts_stop_growing_at_their_caps() {
         assert_eq!(chart_heights(4), (0, 0));
         assert_eq!(chart_heights(7), (7, 0));
-        assert_eq!(chart_heights(20), (16, 0));
-        assert_eq!(chart_heights(23), (16, 7));
-        assert_eq!(chart_heights(70), (16, 12));
+        assert_eq!(chart_heights(18), (14, 0));
+        assert_eq!(chart_heights(21), (14, 7));
+        assert_eq!(chart_heights(70), (14, 14));
     }
 
     #[test]
