@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, MsgType};
+use crate::app::{App, MsgType, PacketKind};
 use crate::tab_bar::TabBar;
 use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
@@ -277,18 +277,17 @@ pub fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area
         .into_iter()
         .rev()
         .map(|p| {
-            let tc = match p.ptype.as_str() {
-                "ADV" => theme.packet_advert,
-                "ACK" => theme.packet_ack,
-                "SND" => theme.packet_sent,
-                "PATH" => theme.packet_path,
-                _ => theme.text,
+            let tc = match p.kind {
+                PacketKind::Advert => theme.packet_advert,
+                PacketKind::Ack => theme.packet_ack,
+                PacketKind::Sent => theme.packet_sent,
+                PacketKind::Path => theme.packet_path,
             };
             ListItem::new(Line::from(vec![
                 Span::styled(&p.timestamp, Style::default().fg(theme.muted)),
                 Span::raw(" "),
                 Span::styled(
-                    format!("[{}]", p.ptype),
+                    format!("[{}]", p.kind.label()),
                     Style::default().fg(tc).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -479,10 +478,10 @@ mod tests {
         }
     }
 
-    fn packet(ptype: &str, hops: u8, info: &str) -> PacketLogEntry {
+    fn packet(kind: PacketKind, hops: u8, info: &str) -> PacketLogEntry {
         PacketLogEntry {
             timestamp: "12:34:56".to_string(),
-            ptype: ptype.to_string(),
+            kind,
             hops,
             rssi: 0,
             snr: 0.0,
@@ -516,9 +515,9 @@ mod tests {
             chat_message("ERR", "Send failed: timeout", MsgType::Error),
         ];
         app.packets = vec![
-            packet("ADV", 0, "Repeater @52.0089,4.3531"),
-            packet("ACK", 0, "tag:deadbeef"),
-            packet("PATH", 2, "a1a1a1a1a1a1 len=2"),
+            packet(PacketKind::Advert, 0, "Repeater @52.0089,4.3531"),
+            packet(PacketKind::Ack, 0, "tag:deadbeef"),
+            packet(PacketKind::Path, 2, "a1a1a1a1a1a1 len=2"),
         ];
         app
     }
@@ -608,7 +607,7 @@ mod tests {
     #[test]
     fn packets_show_newest_when_overflowing() {
         let mut app = App::new(0);
-        app.packets = (0..10).map(|i| packet("ACK", 0, &format!("packet {}", i))).collect();
+        app.packets = (0..10).map(|i| packet(PacketKind::Ack, 0, &format!("packet {}", i))).collect();
         // 5 rows minus borders leaves 3 visible packets: 7..=9
         let rows = rows(&render_panel(60, 5, |f, area| draw_packets(f, &app, &Theme::CLASSIC, false, area)));
         assert!(rows[1].contains("packet 7"));
@@ -619,10 +618,10 @@ mod tests {
     #[test]
     fn packets_show_signal_only_when_known() {
         let mut app = App::new(0);
-        let mut heard = packet("ADV", 1, "heard");
+        let mut heard = packet(PacketKind::Advert, 1, "heard");
         heard.rssi = -92;
         heard.snr = 5.25;
-        app.packets = vec![packet("ACK", 0, "no signal"), heard];
+        app.packets = vec![packet(PacketKind::Ack, 0, "no signal"), heard];
         insta::assert_snapshot!(render_panel(60, 4, |f, area| draw_packets(f, &app, &Theme::CLASSIC, false, area)));
     }
 

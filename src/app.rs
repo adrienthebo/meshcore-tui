@@ -47,10 +47,35 @@ pub enum MsgType {
     Error,
 }
 
+/// What a packet log entry records
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PacketKind {
+    /// A contact advertised
+    Advert,
+    /// A sent DM was acknowledged
+    Ack,
+    /// The radio found a new route to a contact
+    Path,
+    /// We sent a DM
+    Sent,
+}
+
+impl PacketKind {
+    /// The tag shown in the activity panel
+    pub fn label(self) -> &'static str {
+        match self {
+            PacketKind::Advert => "ADV",
+            PacketKind::Ack => "ACK",
+            PacketKind::Path => "PATH",
+            PacketKind::Sent => "SND",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PacketLogEntry {
     pub timestamp: String,
-    pub ptype: String,
+    pub kind: PacketKind,
     pub hops: u8,
     pub rssi: i16,
     pub snr: f32,
@@ -116,10 +141,10 @@ impl App {
     }
 
     /// Append a packet log entry, dropping the oldest beyond MAX_PACKETS
-    fn push_packet(&mut self, ptype: &str, hops: u8, info: String) {
+    fn push_packet(&mut self, kind: PacketKind, hops: u8, info: String) {
         self.packets.push(PacketLogEntry {
             timestamp: now(),
-            ptype: ptype.into(),
+            kind,
             hops,
             rssi: 0,
             snr: 0.0,
@@ -205,7 +230,7 @@ impl App {
     /// A known contact advertised again; the push carries only their key
     fn on_advertisement(&mut self, adv: &AdvertisementData) {
         let who = self.resolve_key(&adv.public_key);
-        self.push_packet("ADV", 0, who.clone());
+        self.push_packet(PacketKind::Advert, 0, who.clone());
         self.push_advert(who, None);
     }
 
@@ -217,20 +242,20 @@ impl App {
             contact.latitude(),
             contact.longitude(),
         );
-        self.push_packet("ADV", hop_count(contact.path_len), info);
+        self.push_packet(PacketKind::Advert, hop_count(contact.path_len), info);
         self.push_advert(sanitize(&contact.adv_name), Some(contact.clone()));
         self.contacts.retain(|c| c.prefix() != contact.prefix());
         self.contacts.push(contact);
     }
 
     fn on_ack(&mut self, tag: &[u8; 4]) {
-        self.push_packet("ACK", 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
+        self.push_packet(PacketKind::Ack, 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
     }
 
     /// The radio found a new route to a contact; the push carries only their key
     fn on_path_update(&mut self, pu: &PathUpdateData) {
         let who = self.resolve_key(&pu.public_key);
-        self.push_packet("PATH", 0, who);
+        self.push_packet(PacketKind::Path, 0, who);
     }
 
     /// Name the contact with this public key, falling back to its prefix in hex
@@ -249,7 +274,7 @@ impl App {
             meshcore_rs::parsing::hex_encode(&info.expected_ack),
             info.suggested_timeout
         );
-        self.push_packet("SND", 0, packet_info);
+        self.push_packet(PacketKind::Sent, 0, packet_info);
     }
 
     pub fn on_channel_sent(&mut self, channel: u8, text: &str) {
@@ -437,7 +462,7 @@ mod tests {
         app.on_advertisement(&AdvertisementData { public_key: repeater.public_key });
         let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
         assert_eq!(infos, vec!["10101010101", "Repeater"]);
-        assert!(app.packets.iter().all(|p| p.ptype == "ADV"));
+        assert!(app.packets.iter().all(|p| p.kind == PacketKind::Advert));
         let adverts: Vec<&str> = app.adverts.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(adverts, vec!["10101010101", "Repeater"]);
         assert!(app.adverts.iter().all(|a| a.new_contact.is_none()));
@@ -472,7 +497,7 @@ mod tests {
         app.on_new_contact(updated);
         let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
         assert_eq!(names, vec!["Other", "New name"]);
-        assert_eq!(last_packet(&app).ptype, "ADV");
+        assert_eq!(last_packet(&app).kind, PacketKind::Advert);
         assert_eq!(last_packet(&app).hops, 2);
     }
 
@@ -489,7 +514,7 @@ mod tests {
     fn ack_logs_tag() {
         let mut app = App::new(0);
         app.on_ack(&[0xde, 0xad, 0xbe, 0xef]);
-        assert_eq!(last_packet(&app).ptype, "ACK");
+        assert_eq!(last_packet(&app).kind, PacketKind::Ack);
         assert_eq!(last_packet(&app).info, "tag:deadbeef");
     }
 
@@ -502,7 +527,7 @@ mod tests {
         app.on_path_update(&PathUpdateData { public_key: alice.public_key });
         let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
         assert_eq!(infos, vec!["10101010101", "Alice"]);
-        assert!(app.packets.iter().all(|p| p.ptype == "PATH"));
+        assert!(app.packets.iter().all(|p| p.kind == PacketKind::Path));
     }
 
     #[test]

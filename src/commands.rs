@@ -376,7 +376,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::test_support::*;
-    use crate::app::MsgType;
+    use crate::app::{MsgType, PacketKind};
     use meshcore_rs::events::SelfInfo;
 
     // ── Slash commands ───────────────────────────────────────────────────────
@@ -782,6 +782,6 @@ mod tests {
         assert_eq!(app.tx_count, 2);
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
         assert_eq!(texts, vec!["yo", "hey"]);
-        assert_eq!(app.packets.last().unwrap().ptype, "SND");
+        assert_eq!(app.packets.last().unwrap().kind, PacketKind::Sent);
     }
 }
