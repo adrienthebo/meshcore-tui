@@ -278,7 +278,7 @@ impl App {
     pub fn on_direct_sent(&mut self, contact: &Contact, text: &str, info: &MsgSentInfo) {
         self.tx_count += 1;
         let sender = format!("\u{2192} {}", sanitize(&contact.adv_name));
-        self.push_message(sender, text.into(), MsgType::Outgoing);
+        self.push_message(sender, sanitize(text), MsgType::Outgoing);
         let packet_info = format!(
             "ack:{} timeout:{}ms",
             meshcore_rs::parsing::hex_encode(&info.expected_ack),
@@ -290,7 +290,7 @@ impl App {
     pub fn on_channel_sent(&mut self, channel: u8, text: &str) {
         self.tx_count += 1;
         let sender = format!("\u{2192} {}", self.channel_label(channel));
-        self.push_message(sender, text.into(), MsgType::Outgoing);
+        self.push_message(sender, sanitize(text), MsgType::Outgoing);
     }
 
     /// The stats poll interval elapsed; asks the radio for stats when connected and idle
@@ -579,6 +579,16 @@ mod tests {
         assert_eq!(msg.text, "yo");
         assert_eq!(app.tx_count, 1);
         assert!(app.packets.is_empty());
+    }
+
+    #[test]
+    fn sent_messages_are_sanitized_like_received_ones() {
+        let mut app = App::new(0);
+        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
+        app.on_direct_sent(&contact("Alice", [1; 6]), "hi 🏳️‍🌈", &info);
+        assert_eq!(last_message(&app), "hi 🌈");
+        app.on_channel_sent(2, "🇩🇪 yo");
+        assert_eq!(last_message(&app), "DE yo");
     }
 
     #[test]
