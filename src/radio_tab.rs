@@ -12,7 +12,7 @@ use ratatui::{
 use crate::app::App;
 use crate::stats::{ClockReading, HISTORY_SECS};
 use crate::theme::Theme;
-use crate::text::format_duration;
+use crate::text::{format_duration, sanitize};
 use crate::ui::{noise_quality, panel, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
@@ -86,7 +86,7 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
     let [device, errors, settings] = three_columns(device);
     draw_device(f, app, theme, device);
     draw_errors(f, app, theme, errors);
-    f.render_widget(panel(theme, " Settings ", theme.radio_border), settings);
+    draw_settings(f, app, theme, settings);
 }
 
 /// Shown in place of a reading the radio hasn't sent yet
@@ -228,6 +228,39 @@ fn draw_device(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Line::from_iter(reading(theme, "Clock", LABEL_WIDTH, value(theme, clock_drift(clock)))),
         // The radio reports its MCU temperature only as self telemetry, which meshcore-rs can't request yet
         Line::from_iter(reading(theme, "MCU temp", LABEL_WIDTH, value(theme, UNKNOWN))),
+    ];
+    f.render_widget(Paragraph::new(rows).block(block), area);
+}
+
+/// Width of the Settings panel's labels, short so the firmware build fits
+const SETTINGS_LABEL_WIDTH: usize = 6;
+
+/// Where the radio advertises itself, in degrees; None when it has no location set
+fn location(lat_microdeg: i32, lon_microdeg: i32) -> Option<String> {
+    let degrees = |microdeg: i32| microdeg as f64 / 1_000_000.0;
+    ((lat_microdeg, lon_microdeg) != (0, 0))
+        .then(|| format!("{:.4}, {:.4}", degrees(lat_microdeg), degrees(lon_microdeg)))
+}
+
+/// The radio's TX power, firmware, model and advertised location
+fn draw_settings(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let block = panel(theme, " Settings ", theme.radio_border);
+    let Some(info) = &app.self_info else {
+        return waiting(f, theme, block, "waiting for device info…", area);
+    };
+    let device = app.device_info.as_ref();
+    let firmware = match device.map(|d| (&d.version, &d.fw_build)) {
+        Some((Some(version), Some(build))) => format!("{} {}", version, build),
+        Some((Some(version), None)) => version.clone(),
+        _ => UNKNOWN.to_string(),
+    };
+    let model = device.and_then(|d| d.model.as_deref()).map_or(UNKNOWN.to_string(), sanitize);
+    let place = location(info.adv_lat, info.adv_lon).unwrap_or("not set".to_string());
+    let rows = vec![
+        Line::from_iter(reading(theme, "TX", SETTINGS_LABEL_WIDTH, value(theme, format!("{} / {} dBm", info.tx_power, info.max_tx_power)))),
+        Line::from_iter(reading(theme, "FW", SETTINGS_LABEL_WIDTH, value(theme, sanitize(&firmware)))),
+        Line::from_iter(reading(theme, "Model", SETTINGS_LABEL_WIDTH, value(theme, model))),
+        Line::from_iter(reading(theme, "Loc", SETTINGS_LABEL_WIDTH, value(theme, place))),
     ];
     f.render_widget(Paragraph::new(rows).block(block), area);
 }
@@ -391,6 +424,7 @@ mod tests {
     use super::*;
     use crate::stats::PacketSignal;
     use crate::test_support::*;
+    use meshcore_rs::events::{DeviceInfoData, SelfInfo};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -404,8 +438,8 @@ mod tests {
     }
 
     /// Noise readings rising from -118 to -96 dBm with one failed poll, and
-    /// packets heard over the last ten minutes, and a radio whose channel
-    /// once stayed busy too long
+    /// packets heard over the last ten minutes, and a radio with a location
+    /// set whose channel once stayed busy too long
     fn app_with_history() -> App {
         let mut app = App::new(0);
         for i in 0..60 {
@@ -418,6 +452,19 @@ mod tests {
         let mut reading = diagnostics_reading();
         reading.core.as_mut().unwrap().errors = 1 << 1;
         app.diagnostics.record(reading);
+        app.self_info = Some(SelfInfo {
+            tx_power: 20,
+            max_tx_power: 22,
+            adv_lat: 52_008_900,
+            adv_lon: -4_353_100,
+            ..Default::default()
+        });
+        app.device_info = Some(DeviceInfoData {
+            version: Some("v1.9.1".to_string()),
+            fw_build: Some("2 Oct 2026".to_string()),
+            model: Some("Heltec V3".to_string()),
+            ..Default::default()
+        });
         app
     }
 
@@ -473,6 +520,12 @@ mod tests {
         assert_eq!(drift(NOW as u32), "in sync");
         assert_eq!(drift(NOW as u32 + 90), "1m30s ahead");
         assert_eq!(drift(NOW as u32 - 5), "5s behind");
+    }
+
+    #[test]
+    fn location_at_zero_is_unset() {
+        assert_eq!(location(0, 0), None);
+        assert_eq!(location(52_008_900, -4_353_100), Some("52.0089, -4.3531".to_string()));
     }
 
     #[test]

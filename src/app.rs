@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use chrono::{Local, Utc};
 use meshcore_rs::events::{
-    AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
-    PathUpdateData, SelfInfo,
+    AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, DeviceInfoData, EventPayload,
+    MsgSentInfo, PathUpdateData, SelfInfo,
 };
 
 use crate::stats::{Diagnostics, PacketSignal, RadioStats};
@@ -94,6 +94,8 @@ pub struct App {
     /// Public key of the contact messages go to; None sends to the active channel
     pub selected_key: Option<[u8; 32]>,
     pub self_info: Option<SelfInfo>,
+    /// The radio's firmware and model, read once at connect
+    pub device_info: Option<DeviceInfoData>,
     pub battery_level: Option<u16>,
     pub active_channel: u8,
     pub port_info: String,
@@ -116,6 +118,7 @@ impl App {
             adverts: Vec::new(),
             selected_key: None,
             self_info: None,
+            device_info: None,
             battery_level: None,
             active_channel: channel,
             port_info: String::new(),

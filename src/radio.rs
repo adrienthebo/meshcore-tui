@@ -96,6 +96,12 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
         }
     }
 
+    // Firmware and model
+    match mc.commands().lock().await.send_device_query().await {
+        Ok(info) => app.device_info = Some(info),
+        Err(e) => app.sys(&format!("Device query warning: {}", e)),
+    }
+
     // Sync time
     {
         let ts = std::time::SystemTime::now()
