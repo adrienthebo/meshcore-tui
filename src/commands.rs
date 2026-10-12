@@ -2,7 +2,7 @@ use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo, Ra
 use meshcore_rs::MeshCore;
 
 use crate::app::{App, ChannelEntry};
-use crate::stats::PollNotice;
+use crate::stats::{DiagnosticsReading, PollNotice};
 use crate::text::sanitize;
 use crate::update::{Effect, Recipient};
 
@@ -265,6 +265,8 @@ pub enum Outcome {
     },
     /// A stats poll's result; a failed poll is reported once, not on every poll
     RadioStats(Result<RadioStatsData, String>),
+    /// A diagnostics poll's results, reported like a stats poll's
+    Diagnostics(DiagnosticsReading),
 }
 
 /// Run a command on the radio; the error is the text to show the user
@@ -335,6 +337,11 @@ impl App {
             Outcome::RadioStats(result) => match self.radio_stats.record(result) {
                 Some(PollNotice::Failed(e)) => self.err(&format!("Radio stats unavailable: {}", e)),
                 Some(PollNotice::Recovered) => self.sys("Radio stats available again"),
+                None => {}
+            },
+            Outcome::Diagnostics(reading) => match self.diagnostics.record(reading) {
+                Some(PollNotice::Failed(e)) => self.err(&format!("Radio diagnostics unavailable: {}", e)),
+                Some(PollNotice::Recovered) => self.sys("Radio diagnostics available again"),
                 None => {}
             },
         }
@@ -771,6 +778,19 @@ mod tests {
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
         assert_eq!(texts, vec!["Radio stats unavailable: timeout", "Radio stats available again"]);
         assert_eq!(app.messages[0].msg_type, MsgType::Error);
+    }
+
+    #[test]
+    fn diagnostics_failures_show_one_error_and_one_recovery() {
+        let mut app = App::new(0);
+        for _ in 0..3 {
+            let reading = DiagnosticsReading { clock: Err("timeout".to_string()), ..diagnostics_reading() };
+            app.apply_outcome(Ok(Outcome::Diagnostics(reading)));
+        }
+        app.apply_outcome(Ok(Outcome::Diagnostics(diagnostics_reading())));
+        let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["Radio diagnostics unavailable: timeout", "Radio diagnostics available again"]);
+        assert_eq!(app.diagnostics.packets.unwrap().recv, 1292);
     }
 
     #[test]

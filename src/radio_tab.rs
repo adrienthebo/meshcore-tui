@@ -39,6 +39,10 @@ impl View for RadioTab {
     fn handle_key(&mut self, _key: KeyEvent, _app: &App) -> KeyResult {
         KeyResult::Ignored
     }
+
+    fn shows_diagnostics(&self) -> bool {
+        true
+    }
 }
 
 /// Heights of the noise floor and SNR charts in `rows`; the SNR chart gives up

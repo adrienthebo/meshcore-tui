@@ -1,6 +1,9 @@
-use meshcore_rs::events::{ChannelMessage, Contact, ContactMessage, RadioStatsData};
+use meshcore_rs::events::{
+    BatteryInfo, ChannelMessage, Contact, ContactMessage, CoreStatsData, PacketStatsData, RadioStatsData,
+};
 
 use crate::app::{App, ChannelEntry};
+use crate::stats::{ClockReading, DiagnosticsReading};
 use crate::theme::Theme;
 use crate::view::Ui;
 
@@ -34,6 +37,24 @@ pub fn radio_stats(noise_floor: i16) -> RadioStatsData {
         last_snr: 5.25,
         tx_air_secs: 12,
         rx_air_secs: 340,
+    }
+}
+
+/// A diagnostics poll where every read succeeded: up 3d4h, battery 4.02 V
+pub fn diagnostics_reading() -> DiagnosticsReading {
+    DiagnosticsReading {
+        core: Ok(CoreStatsData { battery_mv: 4020, uptime_secs: 273_600, errors: 0, queue_len: 0 }),
+        packets: Ok(PacketStatsData {
+            recv: 1292,
+            sent: 49,
+            flood_tx: 37,
+            direct_tx: 12,
+            flood_rx: 1204,
+            direct_rx: 88,
+            recv_errors: Some(3),
+        }),
+        battery: Ok(BatteryInfo { battery_mv: 4020, used_kb: Some(112), total_kb: Some(1024) }),
+        clock: Ok(ClockReading { radio: 1_791_719_995, host: 1_791_720_000 }),
     }
 }
 

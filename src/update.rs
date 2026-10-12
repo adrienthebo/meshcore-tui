@@ -33,6 +33,8 @@ pub enum Effect {
     Send { to: Recipient, text: String },
     /// Read the radio's stats
     PollRadioStats,
+    /// Read the diagnostics the Radio tab shows: core and packet stats, battery and clock
+    PollDiagnostics,
 }
 
 /// A change to the App that a view asks for in response to a key
@@ -65,7 +67,13 @@ pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
             app.apply_outcome(outcome);
             Vec::new()
         }
-        Msg::StatsPollDue => app.poll_radio_stats().into_iter().collect(),
+        Msg::StatsPollDue => {
+            let mut effects: Vec<Effect> = app.poll_radio_stats().into_iter().collect();
+            if ui.active_tab().shows_diagnostics() {
+                effects.extend(app.poll_diagnostics());
+            }
+            effects
+        }
     }
 }
 
@@ -124,6 +132,20 @@ mod tests {
         app.connected = true;
         assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
         assert!(update(&mut app, &mut ui, Msg::StatsPollDue).is_empty());
+        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
+        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+    }
+
+    #[test]
+    fn diagnostics_are_polled_only_while_the_radio_tab_shows() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        app.connected = true;
+        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
+        ui.active = ui.tabs.iter().position(|tab| tab.title() == "Radio").unwrap();
+        let effects = update(&mut app, &mut ui, Msg::StatsPollDue);
+        assert!(matches!(effects[..], [Effect::PollRadioStats, Effect::PollDiagnostics]));
+        // A diagnostics poll still in flight isn't sent again
         update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
         assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
     }

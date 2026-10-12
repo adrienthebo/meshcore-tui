@@ -19,6 +19,10 @@ pub trait View {
     fn key_hints(&self) -> Vec<&'static str> {
         Vec::new()
     }
+    /// Whether the radio's diagnostics are polled while this view is on screen
+    fn shows_diagnostics(&self) -> bool {
+        false
+    }
 }
 
 /// What a view did with a key

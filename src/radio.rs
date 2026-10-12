@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use meshcore_rs::events::EventPayload;
 use meshcore_rs::{EventType, MeshCore};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::App;
 use crate::commands::{run_radio_command, Outcome};
+use crate::stats::{ClockReading, DiagnosticsReading};
 use crate::update::{Effect, Recipient};
 use crate::text::sanitize;
 use crate::Args;
@@ -181,6 +183,7 @@ pub async fn run_radio_effects(
             Effect::Radio(cmd) => run_radio_command(&mc, cmd).await,
             Effect::Send { to, text } => send_text(&mc, to, text).await,
             Effect::PollRadioStats => read_radio_stats(&mc).await,
+            Effect::PollDiagnostics => Ok(Outcome::Diagnostics(read_diagnostics(&mc).await)),
             // The main loop handles alerts itself
             Effect::Alert => continue,
         };
@@ -195,6 +198,17 @@ pub async fn run_radio_effects(
 async fn read_radio_stats(mc: &MeshCore) -> Result<Outcome, String> {
     let stats = mc.commands().lock().await.get_radio_stats().await.map_err(|e| e.to_string());
     Ok(Outcome::RadioStats(stats))
+}
+
+/// Read the Radio tab's diagnostics one after another; each read can fail on its own
+async fn read_diagnostics(mc: &MeshCore) -> DiagnosticsReading {
+    let err = |e: meshcore_rs::Error| e.to_string();
+    let core = mc.commands().lock().await.get_core_stats().await.map_err(err);
+    let packets = mc.commands().lock().await.get_packet_stats().await.map_err(err);
+    let battery = mc.commands().lock().await.get_bat().await.map_err(err);
+    let clock = mc.commands().lock().await.get_time().await.map_err(err)
+        .map(|radio| ClockReading { radio, host: Utc::now().timestamp() });
+    DiagnosticsReading { core, packets, battery, clock }
 }
 
 /// Send a chat message; the error is the text to show the user

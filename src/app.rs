@@ -6,7 +6,7 @@ use meshcore_rs::events::{
     PathUpdateData, SelfInfo,
 };
 
-use crate::stats::{PacketSignal, RadioStats};
+use crate::stats::{Diagnostics, PacketSignal, RadioStats};
 use crate::text::sanitize;
 use crate::update::Effect;
 
@@ -101,6 +101,7 @@ pub struct App {
     pub tx_count: u32,
     pub connected: bool,
     pub radio_stats: RadioStats,
+    pub diagnostics: Diagnostics,
     pub should_quit: bool,
 }
 
@@ -122,6 +123,7 @@ impl App {
             tx_count: 0,
             connected: false,
             radio_stats: RadioStats::default(),
+            diagnostics: Diagnostics::default(),
             should_quit: false,
         }
     }
@@ -291,6 +293,12 @@ impl App {
     /// The stats poll interval elapsed; asks the radio for stats when connected and idle
     pub fn poll_radio_stats(&mut self) -> Option<Effect> {
         (self.connected && self.radio_stats.start_poll()).then_some(Effect::PollRadioStats)
+    }
+
+    /// The stats poll interval elapsed with the Radio tab on screen; asks the
+    /// radio for diagnostics when connected and idle
+    pub fn poll_diagnostics(&mut self) -> Option<Effect> {
+        (self.connected && self.diagnostics.start_poll()).then_some(Effect::PollDiagnostics)
     }
 
     pub fn device_name(&self) -> String {
