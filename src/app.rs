@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use chrono::Local;
+use chrono::{Local, Utc};
 use meshcore_rs::events::{
     AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, EventPayload, MsgSentInfo,
     PathUpdateData, SelfInfo,
 };
 
-use crate::stats::RadioStats;
+use crate::stats::{PacketSignal, RadioStats};
 use crate::text::sanitize;
 use crate::update::Effect;
 
@@ -206,6 +206,11 @@ impl App {
                 self.on_path_update(&pu);
                 false
             }
+            EventPayload::LogData(log) => {
+                let signal = PacketSignal { at: Utc::now().timestamp(), snr: log.snr, rssi: log.rssi };
+                self.radio_stats.record_packet(signal);
+                false
+            }
             // meshcore-rs defines many payloads the app doesn't subscribe to
             _ => false,
         }
@@ -397,6 +402,7 @@ fn now() -> String {
 mod tests {
     use super::*;
     use crate::test_support::*;
+    use meshcore_rs::events::LogData;
 
     // ── Radio events ─────────────────────────────────────────────────────────
 
@@ -419,6 +425,16 @@ mod tests {
         assert_eq!(app.messages.len(), 2);
         assert_eq!(app.packets.len(), 4);
         assert_eq!(app.contacts.len(), 1);
+    }
+
+    #[test]
+    fn rf_log_records_the_packet_signal() {
+        let mut app = App::new(0);
+        let log = LogData { snr: 5.25, rssi: -92, ..Default::default() };
+        assert!(!app.apply_radio_event(EventPayload::LogData(log)));
+        let signal = app.radio_stats.packet_signals.back().expect("no signal");
+        assert_eq!((signal.snr, signal.rssi), (5.25, -92));
+        assert!(app.packets.is_empty());
     }
 
     #[test]

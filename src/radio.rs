@@ -155,6 +155,8 @@ pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPay
         EventType::NewContact,
         EventType::Ack,
         EventType::PathUpdate,
+        // RF log (0x88): the signal of every packet the radio receives
+        EventType::LogData,
     ];
     for event_type in event_types {
         let events = events.clone();
