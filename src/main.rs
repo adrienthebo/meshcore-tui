@@ -5,6 +5,8 @@ mod input;
 mod overview;
 mod radio;
 mod radio_tab;
+mod rx_log;
+mod rx_log_tab;
 mod stats;
 mod tab_bar;
 #[cfg(test)]

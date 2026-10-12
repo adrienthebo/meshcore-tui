@@ -1,6 +1,8 @@
 use meshcore_rs::events::{
-    BatteryInfo, ChannelMessage, Contact, ContactMessage, CoreStatsData, PacketStatsData, RadioStatsData,
+    BatteryInfo, ChannelMessage, Contact, ContactMessage, CoreStatsData, LogData, MeshPacketHeader, PacketStatsData,
+    RadioStatsData, RawAdvertisement,
 };
+use meshcore_rs::{PayloadType, RouteType};
 
 use crate::app::{App, ChannelEntry};
 use crate::stats::{ClockReading, DiagnosticsReading};
@@ -88,6 +90,51 @@ pub fn app_with_contacts(n: u8) -> App {
         app.contacts.push(contact(&format!("c{}", i), [i + 1; 6]));
     }
     app
+}
+
+/// A flood packet's header with one-byte hop hashes
+pub fn flood_header(payload_type: PayloadType, path: &[u8]) -> MeshPacketHeader {
+    MeshPacketHeader {
+        route_type: RouteType::Flood,
+        payload_type,
+        payload_version: 0,
+        transport_code: None,
+        path_len: path.len() as u8,
+        path_hash_size: 1,
+        path: path.to_vec(),
+    }
+}
+
+/// A channel message heard over `path`: channel hash 0xd9, then `payload_len - 1` more bytes
+pub fn group_text_log(path: &[u8], payload_len: usize) -> LogData {
+    let mut payload = vec![0xd9];
+    payload.resize(payload_len, 0x5a);
+    LogData {
+        snr: 9.25,
+        rssi: -28,
+        header: Some(flood_header(PayloadType::GroupText, path)),
+        advertisement: None,
+        payload,
+    }
+}
+
+/// An advert from `name`, heard over two hops
+pub fn advert_log(name: &str) -> LogData {
+    LogData {
+        snr: -2.75,
+        rssi: -112,
+        header: Some(flood_header(PayloadType::Advert, &[0x11, 0x22])),
+        advertisement: Some(RawAdvertisement {
+            public_key: [0xab; 32],
+            timestamp: 0,
+            signature: [0; 64],
+            adv_type: 2,
+            lat: None,
+            lon: None,
+            name: Some(name.to_string()),
+        }),
+        payload: vec![0; 101],
+    }
 }
 
 pub fn last_message(app: &App) -> &str {

@@ -6,6 +6,7 @@ use meshcore_rs::events::{
     MsgSentInfo, PathUpdateData, SelfInfo,
 };
 
+use crate::rx_log::RxLog;
 use crate::stats::{Diagnostics, PacketSignal, RadioStats};
 use crate::text::sanitize;
 use crate::update::Effect;
@@ -104,6 +105,8 @@ pub struct App {
     pub connected: bool,
     pub radio_stats: RadioStats,
     pub diagnostics: Diagnostics,
+    /// Packets the radio received over the air
+    pub rx_log: RxLog,
     pub should_quit: bool,
 }
 
@@ -127,6 +130,7 @@ impl App {
             connected: false,
             radio_stats: RadioStats::default(),
             diagnostics: Diagnostics::default(),
+            rx_log: RxLog::default(),
             should_quit: false,
         }
     }
@@ -214,6 +218,7 @@ impl App {
             EventPayload::LogData(log) => {
                 let signal = PacketSignal { at: Utc::now().timestamp(), snr: log.snr, rssi: log.rssi };
                 self.radio_stats.record_packet(signal);
+                self.rx_log.record(now(), log);
                 false
             }
             // meshcore-rs defines many payloads the app doesn't subscribe to
@@ -439,12 +444,13 @@ mod tests {
     }
 
     #[test]
-    fn rf_log_records_the_packet_signal() {
+    fn rf_log_records_the_packet_and_its_signal() {
         let mut app = App::new(0);
         let log = LogData { snr: 5.25, rssi: -92, ..Default::default() };
         assert!(!app.apply_radio_event(EventPayload::LogData(log)));
         let signal = app.radio_stats.packet_signals.back().expect("no signal");
         assert_eq!((signal.snr, signal.rssi), (5.25, -92));
+        assert_eq!(app.rx_log.packets.back().expect("no packet").log.rssi, -92);
         assert!(app.packets.is_empty());
     }
 
