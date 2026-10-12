@@ -85,7 +85,7 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
 
     let [device, errors, settings] = three_columns(device);
     f.render_widget(panel(theme, " Device ", theme.radio_border), device);
-    f.render_widget(panel(theme, " Errors (since boot) ", theme.radio_border), errors);
+    draw_errors(f, app, theme, errors);
     f.render_widget(panel(theme, " Settings ", theme.radio_border), settings);
 }
 
@@ -198,6 +198,41 @@ fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         row("direct", packets.direct_rx, packets.direct_tx),
         row("total", packets.recv, packets.sent),
     ];
+    f.render_widget(Paragraph::new(rows).block(block), area);
+}
+
+/// The firmware's error flags (`ERR_EVENT_*` in MeshCore's Dispatcher.h), by
+/// bit. Each stays set until the radio reboots.
+const ERROR_FLAGS: [(u16, &str); 3] = [
+    (1 << 0, "Packet pool full"),
+    (1 << 1, "CAD busy timeout"),
+    (1 << 2, "RX stuck >8s"),
+];
+
+/// Width of the Errors panel's labels, so its values line up
+const ERROR_LABEL_WIDTH: usize = 18;
+
+/// Each error flag's label, and whether it is set in `errors`
+fn error_flags(errors: u16) -> impl Iterator<Item = (&'static str, bool)> {
+    ERROR_FLAGS.into_iter().map(move |(bit, label)| (label, errors & bit != 0))
+}
+
+/// Packets the radio failed to read, and the error flags it has raised
+fn draw_errors(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let block = panel(theme, " Errors (since boot) ", theme.radio_border);
+    let (Some(core), Some(packets)) = (app.diagnostics.core, app.diagnostics.packets) else {
+        return waiting(f, theme, block, "waiting for diagnostics…", area);
+    };
+    let recv_errors = packets.recv_errors.map_or(UNKNOWN.to_string(), with_separators);
+    let mut rows = vec![Line::from_iter(reading(theme, "RX errors", ERROR_LABEL_WIDTH, value(theme, recv_errors)))];
+    rows.extend(error_flags(core.errors).map(|(label, set)| {
+        let state = if set {
+            Span::styled("SET", Style::default().fg(theme.bad))
+        } else {
+            Span::styled("ok", Style::default().fg(theme.good))
+        };
+        Line::from_iter(reading(theme, label, ERROR_LABEL_WIDTH, state))
+    }));
     f.render_widget(Paragraph::new(rows).block(block), area);
 }
 
@@ -338,7 +373,8 @@ mod tests {
     }
 
     /// Noise readings rising from -118 to -96 dBm with one failed poll, and
-    /// packets heard over the last ten minutes
+    /// packets heard over the last ten minutes, and a radio whose channel
+    /// once stayed busy too long
     fn app_with_history() -> App {
         let mut app = App::new(0);
         for i in 0..60 {
@@ -348,7 +384,9 @@ mod tests {
         for (ago, snr) in [(600, -9.0), (420, -2.5), (300, 4.0), (120, 7.25), (5, 5.25)] {
             app.radio_stats.record_packet(PacketSignal { at: NOW - ago, snr, rssi: -90 });
         }
-        app.diagnostics.record(diagnostics_reading());
+        let mut reading = diagnostics_reading();
+        reading.core.as_mut().unwrap().errors = 1 << 1;
+        app.diagnostics.record(reading);
         app
     }
 
@@ -396,6 +434,13 @@ mod tests {
         assert_eq!(with_separators(999), "999");
         assert_eq!(with_separators(1_204), "1,204");
         assert_eq!(with_separators(4_294_967_295), "4,294,967,295");
+    }
+
+    #[test]
+    fn error_flags_decode_each_bit() {
+        let flags: Vec<_> = error_flags(0b101).collect();
+        assert_eq!(flags, [("Packet pool full", true), ("CAD busy timeout", false), ("RX stuck >8s", true)]);
+        assert!(error_flags(0).all(|(_, set)| !set));
     }
 
     #[test]
