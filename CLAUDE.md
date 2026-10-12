@@ -55,13 +55,9 @@ The radio is production and shared with a public mesh.
 
 ## Issues
 
-Tracked with git-bug, not in files.
-
-- `git bug bug status:open label:bug` lists open bugs; `label:feature` for features.
-- Label every issue `bug` or `feature`. Add `low-priority` only when asked.
-- Prefix titles with the area when there is one: `[activity]`, `[contacts]`,
-  `[overview]`. New tabs are titled `new tab: …`.
-- Read `git bug <cmd> --help` before using an unfamiliar subcommand.
+Tracked with git-bug, not in files. Use the `git-bug` skill
+(`.claude/skills/git-bug/SKILL.md`) for commands, conventions, and what needs
+approval.
 
 ## Commits
 
