@@ -15,7 +15,9 @@ Toy project: commit on master.
 
 ## Architecture
 
-Nested Elm architecture. Background and rejected alternatives:
+Nested Elm architecture. `DEVELOPING.md` explains the UI patterns: the
+message loop, its types, and one key press traced end to end. Read it before
+changing UI code. Background and rejected alternatives:
 `.agents/memories/ui-architecture.md` (parts of its migration plan are out of
 date; the code wins).
 
