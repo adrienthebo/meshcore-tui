@@ -1,27 +1,56 @@
-/// Strip Unicode replacement chars, control chars, and emoji from mesh strings.
-/// Emoji have inconsistent terminal widths that break TUI border alignment.
+use unicode_segmentation::UnicodeSegmentation;
+
+const ZWJ: char = '\u{200D}';
+
+/// Make mesh strings safe to draw in a terminal that draws each codepoint on
+/// its own. Strips control, replacement and invisible chars, and reduces each
+/// emoji sequence to one char, because terminals disagree on the width of a
+/// sequence: a flag becomes its country code, a ZWJ sequence its last emoji,
+/// and other sequences their base emoji.
 pub fn sanitize(s: &str) -> String {
-    s.chars()
-        .filter(|c| {
-            if *c == '\u{FFFD}' || (*c != ' ' && c.is_control()) {
-                return false;
-            }
-            // Strip emoji and other wide/variable-width Unicode blocks
-            let cp = *c as u32;
-            // Keep ASCII and basic Latin/extended chars
-            if cp < 0x2600 {
-                return true;
-            }
-            // Block various emoji and symbol ranges
-            matches!(cp,
-                // Allow box drawing, block elements, etc. used by TUI
-                0x2500..=0x257F | // Box Drawing
-                0x2580..=0x259F   // Block Elements
-            )
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
+    let mut text = String::new();
+    for cluster in s.graphemes(true) {
+        if cluster.chars().all(is_regional_indicator) {
+            text.extend(cluster.chars().map(country_letter));
+            continue;
+        }
+        let shown = if cluster.starts_with(is_pictograph) {
+            cluster.rsplit(ZWJ).find(|part| !part.is_empty()).unwrap_or(cluster)
+        } else {
+            cluster
+        };
+        text.extend(shown.chars().filter(|c| is_drawable(*c)));
+    }
+    text.trim().to_string()
+}
+
+fn is_regional_indicator(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+}
+
+/// The letter a regional indicator stands for; a pair of them is a flag
+fn country_letter(c: char) -> char {
+    char::from(b'A' + (c as u32 - 0x1F1E6) as u8)
+}
+
+/// Blocks that emoji ZWJ sequences start in; a rough stand-in for
+/// Extended_Pictographic that leaves ZWJs in other scripts' clusters alone
+fn is_pictograph(c: char) -> bool {
+    matches!(c, '\u{2600}'..='\u{27BF}' | '\u{2B00}'..='\u{2BFF}' | '\u{1F000}'..='\u{1FAFF}')
+}
+
+/// False for chars that draw nothing or change how their neighbours draw
+fn is_drawable(c: char) -> bool {
+    !(c == '\u{FFFD}'
+        || c.is_control()
+        || matches!(c,
+            // Zero-width chars, including ZWJ, and invisible separators
+            '\u{200B}'..='\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{2060}' | '\u{FEFF}' |
+            // Bidi embeddings, overrides and isolates
+            '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' |
+            // Emoji sequence parts: presentation selectors, skin tones, keycap, tags
+            '\u{FE0E}' | '\u{FE0F}' | '\u{1F3FB}'..='\u{1F3FF}' | '\u{20E3}' | '\u{E0020}'..='\u{E007F}'
+        ))
 }
 
 /// Split text into chunks of at most `width` display columns; a char wider
@@ -102,13 +131,36 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_strips_emoji_and_symbols_at_or_above_u2600() {
-        assert_eq!(sanitize("hi 😀 ☀ there"), "hi   there");
+    fn sanitize_keeps_single_emoji_symbols_and_cjk() {
+        assert_eq!(sanitize("hi 😀 ☀ 日本 한국"), "hi 😀 ☀ 日本 한국");
     }
 
     #[test]
-    fn sanitize_strips_cjk() {
-        assert_eq!(sanitize("node 日本"), "node");
+    fn sanitize_keeps_combining_accents() {
+        assert_eq!(sanitize("Zoe\u{0308}"), "Zoe\u{0308}");
+    }
+
+    #[test]
+    fn sanitize_turns_flags_into_country_codes() {
+        assert_eq!(sanitize("🇩🇪 Berlin"), "DE Berlin");
+        assert_eq!(sanitize("🇺🇸🇫🇷"), "USFR");
+    }
+
+    #[test]
+    fn sanitize_reduces_zwj_sequences_to_their_last_emoji() {
+        assert_eq!(sanitize("🏳️‍⚧️ 🏳️‍🌈"), "⚧ 🌈");
+        assert_eq!(sanitize("👩‍💻"), "💻");
+    }
+
+    #[test]
+    fn sanitize_reduces_other_emoji_sequences_to_their_base() {
+        assert_eq!(sanitize("👍🏽 ☀️ 1️⃣"), "👍 ☀ 1");
+        assert_eq!(sanitize("🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"), "🏴");
+    }
+
+    #[test]
+    fn sanitize_strips_invisible_and_bidi_chars() {
+        assert_eq!(sanitize("a\u{200B}b\u{202E}c\u{2066}d\u{FEFF}e\u{2028}f\u{2060}g\u{200D}h"), "abcdefgh");
     }
 
     #[test]

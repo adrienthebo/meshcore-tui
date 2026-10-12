@@ -655,8 +655,8 @@ mod tests {
     #[test]
     fn resolve_sender_finds_known_contact() {
         let mut app = App::new(0);
-        app.contacts.push(contact("Alice 😀", [1, 2, 3, 4, 5, 6]));
-        assert_eq!(app.resolve_sender(&[1, 2, 3, 4, 5, 6]), "Alice");
+        app.contacts.push(contact("Alice 🇩🇪", [1, 2, 3, 4, 5, 6]));
+        assert_eq!(app.resolve_sender(&[1, 2, 3, 4, 5, 6]), "Alice DE");
     }
 
     #[test]
