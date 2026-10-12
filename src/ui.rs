@@ -413,6 +413,12 @@ fn quality(value: f32, poor: f32, good: f32) -> f32 {
     ((value - poor) / (good - poor)).clamp(0.0, 1.0)
 }
 
+/// Packet length, where shorter is better since airtime grows with length, up
+/// to the longest packet the RX log shows
+pub fn length_quality(bytes: usize) -> f32 {
+    quality(bytes as f32, crate::rx_log::LONGEST_LOGGED as f32, 0.0)
+}
+
 /// RSSI from the edge of LoRa reception up to a strong local signal
 pub fn rssi_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -120.0, -60.0)
@@ -677,6 +683,13 @@ mod tests {
         assert_eq!(snr_quality(-12.0), 0.0);
         assert_eq!(snr_quality(0.0), 0.5);
         assert_eq!(snr_quality(10.0), 1.0);
+    }
+
+    #[test]
+    fn a_shorter_packet_is_better() {
+        assert_eq!(length_quality(0), 1.0);
+        assert_eq!(length_quality(173), 0.0);
+        assert!(length_quality(55) > length_quality(117));
     }
 
     #[test]

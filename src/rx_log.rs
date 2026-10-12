@@ -11,6 +11,10 @@ use crate::text::sanitize;
 /// Packets kept for the RX Log tab
 pub const RX_LOG_LEN: usize = 5000;
 
+/// The longest packet the radio's RX log push carries: the companion firmware
+/// skips packets that don't fit a frame with the push's 3 bytes (MyMesh::logRxRaw)
+pub const LONGEST_LOGGED: usize = 173;
+
 /// Bytes in a packet's header byte, transport code and path length byte
 const HEADER_BYTE_LEN: usize = 1;
 const TRANSPORT_CODE_LEN: usize = 4;

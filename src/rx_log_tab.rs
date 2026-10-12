@@ -14,7 +14,7 @@ use crate::app::App;
 use crate::rx_log::{payload_type_label, route_label, Field, PacketLayout, RxPacket};
 use crate::text::sanitize;
 use crate::theme::Theme;
-use crate::ui::{panel, rssi_quality, snr_quality};
+use crate::ui::{length_quality, panel, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
 /// Shown in place of a part of the packet the radio didn't send
@@ -184,10 +184,11 @@ fn summary(packet: &RxPacket) -> String {
     }
 }
 
-/// A packet's row, its SNR and RSSI coloured on the same scales as the Radio tab
+/// A packet's row, its SNR and RSSI coloured on the same scales as the Radio
+/// tab and its length from short (good) to long (poor)
 fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let header = packet.log.header.as_ref();
-    let (snr, rssi) = (packet.log.snr, packet.log.rssi);
+    let (snr, rssi, len) = (packet.log.snr, packet.log.rssi, packet.len());
     // Hops and the bytes of each hop's hash: 3×1
     let hops = header.map_or(UNKNOWN.to_string(), |h| format!("{}×{}", h.path_len, h.path_hash_size));
     Row::new([
@@ -197,7 +198,7 @@ fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
         Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
         Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
         Cell::from(format!("{:>4}", hops)),
-        Cell::from(format!("{:>4}", packet.len())),
+        Cell::from(Span::styled(format!("{:>4}", len), Style::default().fg(theme.quality(length_quality(len))))),
         Cell::from(summary(packet)),
     ])
 }
@@ -397,16 +398,17 @@ mod tests {
     }
 
     #[test]
-    fn snr_and_rssi_are_coloured_by_quality() {
+    fn snr_rssi_and_length_are_coloured_by_quality() {
         let mut terminal = Terminal::new(TestBackend::new(80, 7)).unwrap();
         let app = app_with_packets();
         terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
         let buffer = terminal.backend().buffer();
         let theme = Theme::CLASSIC;
-        // Rows 2-4 are the packets newest first; SNR ends at column 15 and RSSI at 20
-        for (y, snr, rssi) in [(3, -2.75, -112), (4, 9.25, -28)] {
+        // Rows 2-4 are the packets newest first; SNR ends at column 15, RSSI at 20 and length at 49
+        for (y, snr, rssi, len) in [(3, -2.75, -112, 117), (4, 9.25, -28, 55)] {
             assert_eq!(buffer[(15, y)].fg, theme.quality(snr_quality(snr)), "SNR on row {}", y);
             assert_eq!(buffer[(20, y)].fg, theme.quality(rssi_quality(rssi)), "RSSI on row {}", y);
+            assert_eq!(buffer[(49, y)].fg, theme.quality(length_quality(len)), "length on row {}", y);
         }
         assert_ne!(buffer[(15, 3)].fg, buffer[(15, 4)].fg);
     }
