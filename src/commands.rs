@@ -3,7 +3,7 @@ use meshcore_rs::{MeshCore, PublicKey};
 
 use crate::app::{App, ChannelEntry};
 use crate::stats::{DiagnosticsReading, PollNotice};
-use crate::text::sanitize;
+use crate::text::{sanitize, url_decode};
 use crate::update::{Effect, Recipient};
 
 /// Generate a channel secret from the operating system's secure random source
@@ -46,7 +46,12 @@ impl CommandSpec {
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec { name: "/help", aliases: &["/h"], args: "", description: "list commands" },
     CommandSpec { name: "/contacts", aliases: &["/c"], args: "", description: "reload contacts" },
-    CommandSpec { name: "/contact-add", aliases: &[], args: "<name> <pubkey>", description: "add a contact" },
+    CommandSpec {
+        name: "/contact-add",
+        aliases: &[],
+        args: "<name> <pubkey> | <meshcore://contact/add link>",
+        description: "add a contact",
+    },
     CommandSpec { name: "/to", aliases: &[], args: "<contact_name>", description: "DM a contact" },
     CommandSpec { name: "/ch", aliases: &["/channel"], args: "<idx>", description: "switch channel" },
     CommandSpec { name: "/public", aliases: &[], args: "", description: "switch to public channel (CH#0)" },
@@ -78,6 +83,7 @@ pub enum Command {
     AddContact {
         name: String,
         public_key: PublicKey,
+        contact_type: u8,
     },
     To(String),
     SwitchChannel(u8),
@@ -118,14 +124,44 @@ fn parse_public_key(hex: &str) -> Result<PublicKey, String> {
         .ok_or_else(|| "Public key must be 64 hex chars (32 bytes)".to_string())
 }
 
-/// "<name> <pubkey>": the key is the last word, so the name may have spaces
+/// Contact type for a companion radio (ADV_TYPE_CHAT)
+const COMPANION: u8 = 1;
+
+/// The MeshCore app's contact QR link (MeshCore/docs/qr_codes.md)
+const CONTACT_LINK_PREFIX: &str = "meshcore://contact/add?";
+
+/// A contact link, or "<name> <pubkey>" for a companion: the key is the last
+/// word, so the name may have spaces
 fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
-    let (name, key) = arg.trim().rsplit_once(' ').ok_or_else(|| spec.usage())?;
+    let arg = arg.trim();
+    if let Some(query) = arg.strip_prefix(CONTACT_LINK_PREFIX) {
+        return parse_contact_link(query);
+    }
+    let (name, key) = arg.rsplit_once(' ').ok_or_else(|| spec.usage())?;
     let name = name.trim();
     if name.is_empty() {
         return Err(spec.usage());
     }
-    Ok(Command::AddContact { name: name.to_string(), public_key: parse_public_key(key)? })
+    Ok(Command::AddContact { name: name.to_string(), public_key: parse_public_key(key)?, contact_type: COMPANION })
+}
+
+/// A contact link's query: name, public_key and an optional numeric type
+fn parse_contact_link(query: &str) -> Result<Command, String> {
+    let (mut name, mut key, mut contact_type) = (None, None, COMPANION);
+    for pair in query.split('&') {
+        let (field, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = url_decode(value).ok_or_else(|| format!("Contact link has a badly escaped {}", field))?;
+        match field {
+            "name" => name = Some(value),
+            "public_key" => key = Some(parse_public_key(&value)?),
+            "type" => contact_type = value.parse().map_err(|_| "Contact link type must be a number".to_string())?,
+            _ => {}
+        }
+    }
+    match (name, key) {
+        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact { name, public_key, contact_type }),
+        _ => Err("Contact link needs a name and public_key".to_string()),
+    }
 }
 
 /// Parse a slash command line; the error is the text to show the user
@@ -267,12 +303,9 @@ async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]
     Ok(secret)
 }
 
-/// Contact type for a companion radio (ADV_TYPE_CHAT)
-const COMPANION: u8 = 1;
-
-/// Add a companion contact with no route, then reload the contact list to show it
-async fn add_contact(mc: &MeshCore, name: String, public_key: PublicKey) -> Result<Outcome, String> {
-    let contact = Contact { public_key, contact_type: COMPANION, adv_name: name.clone(), ..Default::default() };
+/// Add a contact with no route, then reload the contact list to show it
+async fn add_contact(mc: &MeshCore, name: String, public_key: PublicKey, contact_type: u8) -> Result<Outcome, String> {
+    let contact = Contact { public_key, contact_type, adv_name: name.clone(), ..Default::default() };
     let commands = mc.commands().lock().await;
     commands.add_contact(&contact).await.map_err(|e| format!("Add contact: {}", e))?;
     let contacts = commands.get_contacts(0).await.map_err(|e| format!("Contacts: {}", e))?;
@@ -320,7 +353,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
         Command::Contacts => mc.commands().lock().await.get_contacts(0).await
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
-        Command::AddContact { name, public_key } => add_contact(mc, name, public_key).await,
+        Command::AddContact { name, public_key, contact_type } => add_contact(mc, name, public_key, contact_type).await,
         Command::Advert => mc.commands().lock().await.send_advert(true).await
             .map(|_| Outcome::AdvertSent)
             .map_err(|e| format!("Advert: {}", e)),
@@ -511,20 +544,36 @@ mod tests {
         PublicKey::try_from(meshcore_rs::parsing::hex_decode(KEY_HEX).unwrap()).unwrap()
     }
 
+    fn add_contact(name: &str, contact_type: u8) -> Command {
+        Command::AddContact { name: name.to_string(), public_key: key(), contact_type }
+    }
+
     #[test]
     fn parse_contact_add_takes_the_last_word_as_the_key() {
-        assert_eq!(
-            parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)),
-            Ok(Command::AddContact { name: "Big Bob".to_string(), public_key: key() })
-        );
-        assert_eq!(parse_command("/contact-add"), Err("Usage: /contact-add <name> <pubkey>".to_string()));
-        assert_eq!(
-            parse_command(&format!("/contact-add {}", KEY_HEX)),
-            Err("Usage: /contact-add <name> <pubkey>".to_string())
-        );
+        let usage = Err("Usage: /contact-add <name> <pubkey> | <meshcore://contact/add link>".to_string());
+        assert_eq!(parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)), Ok(add_contact("Big Bob", COMPANION)));
+        assert_eq!(parse_command("/contact-add"), usage);
+        assert_eq!(parse_command(&format!("/contact-add {}", KEY_HEX)), usage);
         assert_eq!(
             parse_command("/contact-add Bob 9cd8"),
             Err("Public key must be 64 hex chars (32 bytes)".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_contact_add_reads_a_contact_link() {
+        let link = format!("meshcore://contact/add?name=Example+Contact&public_key={}&type=2", KEY_HEX);
+        assert_eq!(parse_command(&format!("/contact-add {}", link)), Ok(add_contact("Example Contact", 2)));
+        // The type is optional
+        let link = format!("meshcore://contact/add?public_key={}&name=Bob", KEY_HEX);
+        assert_eq!(parse_command(&format!("/contact-add {}", link)), Ok(add_contact("Bob", COMPANION)));
+        assert_eq!(
+            parse_command("/contact-add meshcore://contact/add?name=Bob"),
+            Err("Contact link needs a name and public_key".to_string())
+        );
+        assert_eq!(
+            parse_command(&format!("/contact-add meshcore://contact/add?name=Bob&public_key={}&type=x", KEY_HEX)),
+            Err("Contact link type must be a number".to_string())
         );
     }
 
@@ -534,15 +583,14 @@ mod tests {
         let mut bob = contact("Bob", [0; 6]);
         bob.public_key = key();
         app.contacts.push(bob);
-        assert!(app.apply_local(Command::AddContact { name: "Robert".to_string(), public_key: key() }).is_none());
+        assert!(app.apply_local(add_contact("Robert", COMPANION)).is_none());
         assert_eq!(last_message(&app), "That key is already a contact: Bob");
     }
 
     #[test]
     fn contact_add_of_a_new_key_goes_to_the_radio() {
         let mut app = App::new(0);
-        let cmd = Command::AddContact { name: "Bob".to_string(), public_key: key() };
-        assert_eq!(app.apply_local(cmd), Some(Command::AddContact { name: "Bob".to_string(), public_key: key() }));
+        assert_eq!(app.apply_local(add_contact("Bob", COMPANION)), Some(add_contact("Bob", COMPANION)));
     }
 
     #[test]

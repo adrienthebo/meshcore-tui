@@ -104,9 +104,38 @@ pub fn format_duration(secs: u32) -> String {
     }
 }
 
+/// Decode a URL query value: "+" is a space and "%XX" a byte. None when a "%"
+/// isn't followed by two hex digits or the bytes aren't UTF-8.
+pub fn url_decode(s: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(s.len());
+    let mut rest = s.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        rest = tail;
+        match b {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let hex = std::str::from_utf8(rest.get(..2)?).ok()?;
+                bytes.push(u8::from_str_radix(hex, 16).ok()?);
+                rest = &rest[2..];
+            }
+            _ => bytes.push(b),
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_decode_turns_plus_and_percent_escapes_into_text() {
+        assert_eq!(url_decode("Example+Contact").as_deref(), Some("Example Contact"));
+        assert_eq!(url_decode("Hilltop%20%F0%9F%96%96").as_deref(), Some("Hilltop 🖖"));
+        assert_eq!(url_decode("100%25").as_deref(), Some("100%"));
+        assert_eq!(url_decode("bad%2"), None);
+        assert_eq!(url_decode("bad%zz"), None);
+    }
 
     #[test]
     fn durations_use_the_largest_units_and_skip_zeros() {
