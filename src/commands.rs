@@ -1,5 +1,5 @@
 use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo, RadioStatsData};
-use meshcore_rs::MeshCore;
+use meshcore_rs::{MeshCore, PublicKey};
 
 use crate::app::{App, ChannelEntry};
 use crate::stats::{DiagnosticsReading, PollNotice};
@@ -46,6 +46,7 @@ impl CommandSpec {
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec { name: "/help", aliases: &["/h"], args: "", description: "list commands" },
     CommandSpec { name: "/contacts", aliases: &["/c"], args: "", description: "reload contacts" },
+    CommandSpec { name: "/contact-add", aliases: &[], args: "<name> <pubkey>", description: "add a contact" },
     CommandSpec { name: "/to", aliases: &[], args: "<contact_name>", description: "DM a contact" },
     CommandSpec { name: "/ch", aliases: &["/channel"], args: "<idx>", description: "switch channel" },
     CommandSpec { name: "/public", aliases: &[], args: "", description: "switch to public channel (CH#0)" },
@@ -74,6 +75,10 @@ fn find_command(name: &str) -> Option<&'static CommandSpec> {
 pub enum Command {
     Help,
     Contacts,
+    AddContact {
+        name: String,
+        public_key: PublicKey,
+    },
     To(String),
     SwitchChannel(u8),
     Public,
@@ -106,6 +111,23 @@ fn parse_secret(hex: &str) -> Result<[u8; 16], String> {
         .ok_or_else(|| "Secret must be 32 hex chars (16 bytes)".to_string())
 }
 
+fn parse_public_key(hex: &str) -> Result<PublicKey, String> {
+    meshcore_rs::parsing::hex_decode(hex)
+        .ok()
+        .and_then(|bytes| PublicKey::try_from(bytes).ok())
+        .ok_or_else(|| "Public key must be 64 hex chars (32 bytes)".to_string())
+}
+
+/// "<name> <pubkey>": the key is the last word, so the name may have spaces
+fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
+    let (name, key) = arg.trim().rsplit_once(' ').ok_or_else(|| spec.usage())?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(spec.usage());
+    }
+    Ok(Command::AddContact { name: name.to_string(), public_key: parse_public_key(key)? })
+}
+
 /// Parse a slash command line; the error is the text to show the user
 fn parse_command(input: &str) -> Result<Command, String> {
     let parts: Vec<&str> = input.trim().splitn(2, ' ').collect();
@@ -116,6 +138,7 @@ fn parse_command(input: &str) -> Result<Command, String> {
     match spec.name {
         "/help" => Ok(Command::Help),
         "/contacts" => Ok(Command::Contacts),
+        "/contact-add" => parse_add_contact(arg, spec),
         "/to" if arg.is_empty() => Err(spec.usage()),
         "/to" => Ok(Command::To(arg.to_string())),
         "/ch" => parse_channel_index(arg, spec).map(Command::SwitchChannel),
@@ -211,6 +234,12 @@ impl App {
                 }
             }
             Command::Quit => self.should_quit = true,
+            // Adding a key that's already a contact would overwrite its name and type and reset its route
+            Command::AddContact { public_key, .. } if self.contacts.iter().any(|c| c.public_key == public_key) => {
+                let existing = self.contacts.iter().find(|c| c.public_key == public_key);
+                let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
+                self.err(&format!("That key is already a contact: {}", name));
+            }
             radio => return Some(radio),
         }
         None
@@ -238,10 +267,26 @@ async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]
     Ok(secret)
 }
 
+/// Contact type for a companion radio (ADV_TYPE_CHAT)
+const COMPANION: u8 = 1;
+
+/// Add a companion contact with no route, then reload the contact list to show it
+async fn add_contact(mc: &MeshCore, name: String, public_key: PublicKey) -> Result<Outcome, String> {
+    let contact = Contact { public_key, contact_type: COMPANION, adv_name: name.clone(), ..Default::default() };
+    let commands = mc.commands().lock().await;
+    commands.add_contact(&contact).await.map_err(|e| format!("Add contact: {}", e))?;
+    let contacts = commands.get_contacts(0).await.map_err(|e| format!("Contacts: {}", e))?;
+    Ok(Outcome::ContactAdded { name, contacts })
+}
+
 /// What the radio returned for a command or sent message, for the app to apply
 #[derive(Debug)]
 pub enum Outcome {
     Contacts(Vec<Contact>),
+    ContactAdded {
+        name: String,
+        contacts: Vec<Contact>,
+    },
     AdvertSent,
     Battery(BatteryInfo),
     NameSet(String),
@@ -275,6 +320,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
         Command::Contacts => mc.commands().lock().await.get_contacts(0).await
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
+        Command::AddContact { name, public_key } => add_contact(mc, name, public_key).await,
         Command::Advert => mc.commands().lock().await.send_advert(true).await
             .map(|_| Outcome::AdvertSent)
             .map_err(|e| format!("Advert: {}", e)),
@@ -304,6 +350,10 @@ impl App {
         match outcome {
             Outcome::Contacts(contacts) => {
                 self.sys(&format!("Loaded {} contacts", contacts.len()));
+                self.set_contacts(contacts);
+            }
+            Outcome::ContactAdded { name, contacts } => {
+                self.sys(&format!("Added contact {}", sanitize(&name)));
                 self.set_contacts(contacts);
             }
             Outcome::AdvertSent => self.sys("Advertisement sent"),
@@ -453,6 +503,55 @@ mod tests {
     fn parse_name_requires_an_argument() {
         assert_eq!(parse_command("/name Base"), Ok(Command::Name("Base".to_string())));
         assert_eq!(parse_command("/name"), Err("Usage: /name <new_name>".to_string()));
+    }
+
+    const KEY_HEX: &str = "9cd8fcf22a47333b591d96a2b848b73f457b1bb1a3ea2453a885f9e5787765b1";
+
+    fn key() -> PublicKey {
+        PublicKey::try_from(meshcore_rs::parsing::hex_decode(KEY_HEX).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn parse_contact_add_takes_the_last_word_as_the_key() {
+        assert_eq!(
+            parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)),
+            Ok(Command::AddContact { name: "Big Bob".to_string(), public_key: key() })
+        );
+        assert_eq!(parse_command("/contact-add"), Err("Usage: /contact-add <name> <pubkey>".to_string()));
+        assert_eq!(
+            parse_command(&format!("/contact-add {}", KEY_HEX)),
+            Err("Usage: /contact-add <name> <pubkey>".to_string())
+        );
+        assert_eq!(
+            parse_command("/contact-add Bob 9cd8"),
+            Err("Public key must be 64 hex chars (32 bytes)".to_string())
+        );
+    }
+
+    #[test]
+    fn contact_add_refuses_a_key_that_is_already_a_contact() {
+        let mut app = App::new(0);
+        let mut bob = contact("Bob", [0; 6]);
+        bob.public_key = key();
+        app.contacts.push(bob);
+        assert!(app.apply_local(Command::AddContact { name: "Robert".to_string(), public_key: key() }).is_none());
+        assert_eq!(last_message(&app), "That key is already a contact: Bob");
+    }
+
+    #[test]
+    fn contact_add_of_a_new_key_goes_to_the_radio() {
+        let mut app = App::new(0);
+        let cmd = Command::AddContact { name: "Bob".to_string(), public_key: key() };
+        assert_eq!(app.apply_local(cmd), Some(Command::AddContact { name: "Bob".to_string(), public_key: key() }));
+    }
+
+    #[test]
+    fn added_contact_shows_in_the_reloaded_list() {
+        let mut app = App::new(0);
+        let contacts = vec![contact("Bob", [1; 6])];
+        app.apply_outcome(Ok(Outcome::ContactAdded { name: "Bob".to_string(), contacts }));
+        assert_eq!(last_message(&app), "Added contact Bob");
+        assert_eq!(app.contacts.len(), 1);
     }
 
     #[test]
