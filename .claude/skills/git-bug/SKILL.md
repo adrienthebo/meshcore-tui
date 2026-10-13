@@ -27,8 +27,11 @@ the repo root.
 
 - Label every issue `bug` or `feature`. Add `low-priority` only when asked.
   `git bug label` lists the labels in use.
-- Prefix titles with the area when there is one: `[activity]`, `[contacts]`,
-  `[overview]`. New tabs are titled `new tab: …`.
+- Titles are conventional commits: `type(scope): description`, as in
+  CLAUDE.md. `fix` for bugs, `feat` for features; `refactor`, `chore`,
+  `ci` or `docs` when that's the work. Scope is the area (`contacts`,
+  `activity`, `rx-log`); meshcore-rs work uses `meshcore-rs`. New tabs
+  are `feat(tabs): add a … tab`.
 
 ## Reading
 
@@ -49,7 +52,7 @@ Always pass `--non-interactive` where it exists, or the command opens an
 editor and hangs.
 
 ```sh
-git bug bug new -t "[activity] Title" -m "Body" --non-interactive
+git bug bug new -t "fix(activity): title" -m "Body" --non-interactive
 git bug bug label new <id> bug
 git bug bug label rm <id> low-priority
 git bug bug comment new <id> -m "Comment" --non-interactive
