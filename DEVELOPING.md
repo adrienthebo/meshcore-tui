@@ -1,6 +1,20 @@
 # Developing meshcore-tui
 
-How the UI is put together, and how to change it.
+How to set up a checkout, how the UI is put together, and how to change it.
+
+## Setup
+
+[mise](https://mise.jdx.dev) installs the tools, and its `init` task sets up
+the checkout:
+
+```sh
+mise install
+mise run init
+```
+
+`init` installs the [hk](https://hk.jdx.dev) git hooks and points
+`git blame` at `.git-blame-ignore-revs`, which lists bulk changes like
+the `cargo fmt` reformat so blame skips them.
 
 ## The model, on one screen
 
