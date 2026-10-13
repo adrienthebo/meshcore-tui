@@ -49,7 +49,7 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "/contact-add",
         aliases: &[],
-        args: "<name> <pubkey> | <meshcore://contact/add link>",
+        args: "<name> <pubkey> | <meshcore://contact/add link> | <meshcore:// card>",
         description: "add a contact",
     },
     CommandSpec { name: "/to", aliases: &[], args: "<contact_name>", description: "DM a contact" },
@@ -85,6 +85,8 @@ pub enum Command {
         public_key: PublicKey,
         contact_type: u8,
     },
+    /// A biz card: a node's signed advert packet
+    ImportContact(Vec<u8>),
     To(String),
     SwitchChannel(u8),
     Public,
@@ -130,12 +132,21 @@ const COMPANION: u8 = 1;
 /// The MeshCore app's contact QR link (MeshCore/docs/qr_codes.md)
 const CONTACT_LINK_PREFIX: &str = "meshcore://contact/add?";
 
-/// A contact link, or "<name> <pubkey>" for a companion: the key is the last
-/// word, so the name may have spaces
+/// A biz card is this followed by a node's advert packet in hex ("Card to
+/// Clipboard", MeshCore/docs/faq.md)
+const CARD_PREFIX: &str = "meshcore://";
+
+/// A contact link, a biz card, or "<name> <pubkey>" for a companion: the key is
+/// the last word, so the name may have spaces
 fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     let arg = arg.trim();
     if let Some(query) = arg.strip_prefix(CONTACT_LINK_PREFIX) {
         return parse_contact_link(query);
+    }
+    if let Some(card) = arg.strip_prefix(CARD_PREFIX) {
+        return meshcore_rs::parsing::hex_decode(card)
+            .map(Command::ImportContact)
+            .map_err(|_| "Contact card must be hex after meshcore://".to_string());
     }
     let (name, key) = arg.rsplit_once(' ').ok_or_else(|| spec.usage())?;
     let name = name.trim();
@@ -320,6 +331,9 @@ pub enum Outcome {
         name: String,
         contacts: Vec<Contact>,
     },
+    /// The radio took a biz card; it handles the advert as if it heard it, so a
+    /// new contact arrives as a new contact push
+    ContactImported,
     AdvertSent,
     Battery(BatteryInfo),
     NameSet(String),
@@ -354,6 +368,9 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
         Command::AddContact { name, public_key, contact_type } => add_contact(mc, name, public_key, contact_type).await,
+        Command::ImportContact(card) => mc.commands().lock().await.import_contact(&card).await
+            .map(|_| Outcome::ContactImported)
+            .map_err(|e| format!("Import contact: {}", e)),
         Command::Advert => mc.commands().lock().await.send_advert(true).await
             .map(|_| Outcome::AdvertSent)
             .map_err(|e| format!("Advert: {}", e)),
@@ -389,6 +406,7 @@ impl App {
                 self.sys(&format!("Added contact {}", sanitize(&name)));
                 self.set_contacts(contacts);
             }
+            Outcome::ContactImported => self.sys("Contact card imported"),
             Outcome::AdvertSent => self.sys("Advertisement sent"),
             Outcome::Battery(b) => {
                 self.battery_level = Some(b.battery_mv);
@@ -550,7 +568,8 @@ mod tests {
 
     #[test]
     fn parse_contact_add_takes_the_last_word_as_the_key() {
-        let usage = Err("Usage: /contact-add <name> <pubkey> | <meshcore://contact/add link>".to_string());
+        let usage =
+            Err("Usage: /contact-add <name> <pubkey> | <meshcore://contact/add link> | <meshcore:// card>".to_string());
         assert_eq!(parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)), Ok(add_contact("Big Bob", COMPANION)));
         assert_eq!(parse_command("/contact-add"), usage);
         assert_eq!(parse_command(&format!("/contact-add {}", KEY_HEX)), usage);
@@ -574,6 +593,18 @@ mod tests {
         assert_eq!(
             parse_command(&format!("/contact-add meshcore://contact/add?name=Bob&public_key={}&type=x", KEY_HEX)),
             Err("Contact link type must be a number".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_contact_add_reads_a_card() {
+        assert_eq!(
+            parse_command("/contact-add meshcore://1100aabb"),
+            Ok(Command::ImportContact(vec![0x11, 0x00, 0xaa, 0xbb]))
+        );
+        assert_eq!(
+            parse_command("/contact-add meshcore://nothex"),
+            Err("Contact card must be hex after meshcore://".to_string())
         );
     }
 
