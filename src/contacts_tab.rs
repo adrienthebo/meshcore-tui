@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{AdvertEntry, App};
+use crate::app::{AdvertEntry, App, Route};
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
@@ -131,12 +131,11 @@ fn advert_age(last_advert: u32, now: i64) -> String {
     format!("{} ago", format_duration(secs))
 }
 
-/// A path length of -1 means the radio floods messages to this contact
+/// "flood" when the radio has no route to this contact, else the hop count
 fn hops_label(path_len: i8) -> String {
-    if path_len < 0 {
-        "flood".to_string()
-    } else {
-        path_len.to_string()
+    match Route::from_path_len(path_len) {
+        Route::Flood => "flood".to_string(),
+        Route::Hops { count, .. } => count.to_string(),
     }
 }
 
@@ -357,6 +356,8 @@ mod tests {
     fn hops_and_position_have_placeholders() {
         assert_eq!(hops_label(-1), "flood");
         assert_eq!(hops_label(3), "3");
+        // Three hops named by 2-byte hashes
+        assert_eq!(hops_label(0x43), "3");
         assert_eq!(position_label(&contact("Nowhere", [1; 6])), "—");
     }
 }
