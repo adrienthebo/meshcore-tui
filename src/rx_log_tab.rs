@@ -180,7 +180,7 @@ fn summary(packet: &RxPacket) -> String {
             .map(sanitize)
             .unwrap_or_default(),
         Some(PayloadType::GroupText) => match log.payload.get(..3) {
-            Some([hash, mac @ ..]) => format!("chan hash 0x{:02x} mac 0x{}", hash, hex_encode(mac)),
+            Some([hash, mac @ ..]) => format!("ch/0x{:02x} MAC/0x{}", hash, hex_encode(mac)),
             _ => String::new(),
         },
         _ => String::new(),
@@ -652,6 +652,6 @@ mod tests {
     fn summary_names_adverts_and_channel_hashes() {
         let app = app_with_packets();
         let summaries: Vec<String> = RxLogTab::default().newest_first(&app).map(summary).collect();
-        assert_eq!(summaries, ["", "Hilltop 🖖", "chan hash 0xd9 mac 0x5a5a"]);
+        assert_eq!(summaries, ["", "Hilltop 🖖", "ch/0xd9 MAC/0x5a5a"]);
     }
 }
