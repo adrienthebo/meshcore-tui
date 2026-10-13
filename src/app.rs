@@ -1,15 +1,43 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Local, Utc};
 use meshcore_rs::events::{
     AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, DeviceInfoData,
-    EventPayload, MsgSentInfo, PathUpdateData, SelfInfo,
+    EventPayload, LoginSuccessData, MsgSentInfo, PathUpdateData, SelfInfo,
 };
 
 use crate::rx_log::RxLog;
 use crate::stats::{Diagnostics, PacketSignal, RadioStats};
 use crate::text::sanitize;
 use crate::update::Effect;
+
+/// What a room server lets us do, from the permissions in its login reply
+/// (companion_radio MyMesh::onContactResponse)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RoomRole {
+    Admin,
+    ReadWrite,
+    /// A guest: the room pushes posts but ignores ours
+    ReadOnly,
+}
+
+impl RoomRole {
+    fn from_permissions(permissions: u8) -> Self {
+        match permissions {
+            1 => RoomRole::Admin,
+            2 => RoomRole::ReadOnly,
+            _ => RoomRole::ReadWrite,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RoomRole::Admin => "admin",
+            RoomRole::ReadWrite => "read-write",
+            RoomRole::ReadOnly => "read-only",
+        }
+    }
+}
 
 /// Stored channel info
 #[derive(Clone, Debug)]
@@ -146,6 +174,10 @@ pub struct App {
     pub diagnostics: Diagnostics,
     /// Packets the radio received over the air
     pub rx_log: RxLog,
+    /// Room servers that accepted our login, by public key
+    pub room_logins: HashMap<[u8; 32], RoomRole>,
+    /// Room servers we sent a login to and haven't heard back from
+    pending_logins: HashSet<[u8; 32]>,
     pub should_quit: bool,
 }
 
@@ -171,6 +203,8 @@ impl App {
             radio_stats: RadioStats::default(),
             diagnostics: Diagnostics::default(),
             rx_log: RxLog::default(),
+            room_logins: HashMap::new(),
+            pending_logins: HashSet::new(),
             should_quit: false,
         }
     }
@@ -266,9 +300,62 @@ impl App {
                 self.rx_log.record(now(), log);
                 false
             }
+            EventPayload::LoginSuccess(login) => {
+                self.on_login_success(&login);
+                false
+            }
+            EventPayload::LoginFailed { pubkey_prefix } => {
+                self.on_login_failed(&pubkey_prefix);
+                false
+            }
             // meshcore-rs defines many payloads the app doesn't subscribe to
             _ => false,
         }
+    }
+
+    /// The radio sent a login to a room server; the reply comes as a push
+    pub fn on_login_sent(&mut self, public_key: [u8; 32]) {
+        self.pending_logins.insert(public_key);
+        let name = self.resolve_key(&public_key);
+        self.sys(&format!("Logging in to {}…", name));
+    }
+
+    /// A login's wait ran out; says so only if no reply came
+    pub fn on_login_timed_out(&mut self, public_key: [u8; 32]) {
+        if self.pending_logins.remove(&public_key) {
+            let name = self.resolve_key(&public_key);
+            self.err(&format!(
+                "No reply from {}: wrong password, or out of range",
+                name
+            ));
+        }
+    }
+
+    fn on_login_success(&mut self, login: &LoginSuccessData) {
+        let role = RoomRole::from_permissions(login.permissions);
+        let name = self.resolve_sender(&login.pubkey_prefix);
+        if let Some(key) = self.contact_key(&login.pubkey_prefix) {
+            self.pending_logins.remove(&key);
+            self.room_logins.insert(key, role);
+        }
+        self.sys(&format!("Logged in to {} as {}", name, role.label()));
+    }
+
+    fn on_login_failed(&mut self, prefix: &[u8; 6]) {
+        let name = self.resolve_sender(prefix);
+        if let Some(key) = self.contact_key(prefix) {
+            self.pending_logins.remove(&key);
+            self.room_logins.remove(&key);
+        }
+        self.err(&format!("Login to {} refused", name));
+    }
+
+    /// The full key of the contact whose key starts with `prefix`
+    fn contact_key(&self, prefix: &[u8; 6]) -> Option<[u8; 32]> {
+        self.contacts
+            .iter()
+            .find(|c| &c.public_key[..6] == prefix)
+            .map(|c| c.public_key)
     }
 
     fn on_contact_message(&mut self, msg: &ContactMessage) {
@@ -354,6 +441,12 @@ impl App {
             info.suggested_timeout
         );
         self.push_packet(PacketKind::Sent, None, packet_info);
+        if self.room_logins.get(&contact.public_key) == Some(&RoomRole::ReadOnly) {
+            self.err(&format!(
+                "{} is read-only for us: the room won't post this",
+                sanitize(&contact.adv_name)
+            ));
+        }
     }
 
     pub fn on_channel_sent(&mut self, channel: u8, text: &str) {
@@ -555,6 +648,75 @@ mod tests {
 
     fn last_packet(app: &App) -> &PacketLogEntry {
         app.packets.last().expect("no packets")
+    }
+
+    fn login_success(prefix: [u8; 6], permissions: u8) -> EventPayload {
+        EventPayload::LoginSuccess(LoginSuccessData {
+            pubkey_prefix: prefix,
+            permissions,
+            server_timestamp: None,
+            acl_permissions: None,
+            firmware_ver_level: None,
+        })
+    }
+
+    #[test]
+    fn login_success_records_the_role_and_ends_the_wait() {
+        let mut app = App::new(0);
+        let room = contact("Room", [4; 6]);
+        let key = room.public_key;
+        app.contacts.push(room);
+        app.on_login_sent(key);
+        assert!(!app.apply_radio_event(login_success([4; 6], 0)));
+        assert_eq!(last_message(&app), "Logged in to Room as read-write");
+        assert_eq!(app.room_logins[&key], RoomRole::ReadWrite);
+        let count = app.messages.len();
+        app.on_login_timed_out(key);
+        assert_eq!(
+            app.messages.len(),
+            count,
+            "a timeout after the reply says nothing"
+        );
+    }
+
+    #[test]
+    fn login_roles_come_from_the_permissions() {
+        assert_eq!(RoomRole::from_permissions(1), RoomRole::Admin);
+        assert_eq!(RoomRole::from_permissions(2), RoomRole::ReadOnly);
+        assert_eq!(RoomRole::from_permissions(0), RoomRole::ReadWrite);
+    }
+
+    #[test]
+    fn login_failure_forgets_the_room() {
+        let mut app = App::new(0);
+        let room = contact("Room", [4; 6]);
+        let key = room.public_key;
+        app.contacts.push(room);
+        app.apply_radio_event(login_success([4; 6], 0));
+        app.apply_radio_event(EventPayload::LoginFailed {
+            pubkey_prefix: [4; 6],
+        });
+        assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
+        assert_eq!(last_message(&app), "Login to Room refused");
+        assert!(!app.room_logins.contains_key(&key));
+    }
+
+    #[test]
+    fn posting_to_a_read_only_room_warns() {
+        let mut app = App::new(0);
+        let room = contact("Room", [4; 6]);
+        app.contacts.push(room.clone());
+        app.apply_radio_event(login_success([4; 6], 2));
+        let info = MsgSentInfo {
+            message_type: 0,
+            expected_ack: [0; 4],
+            suggested_timeout: 0,
+        };
+        app.on_direct_sent(&room, "hi", &info);
+        assert_eq!(
+            last_message(&app),
+            "Room is read-only for us: the room won't post this"
+        );
     }
 
     #[test]
