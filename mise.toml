@@ -1,0 +1,9 @@
+[tools]
+hk = "2.6.0"
+
+[tasks.init]
+description = "Install git hooks and repo git config"
+run = [
+  "hk install --mise",
+  "git config blame.ignoreRevsFile .git-blame-ignore-revs",
+]
