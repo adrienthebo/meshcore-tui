@@ -24,8 +24,10 @@ trim = true
 [git]
 conventional_commits = true
 filter_unconventional = true
-# Only user-visible changes; chore, ci, docs, refactor, style, test and build are left out
+# Only user-visible changes; chore, ci, docs, refactor, style, test and build are left out,
+# as is any commit with a `changelog: skip` footer
 commit_parsers = [
+  { footer = "^changelog: ?skip", skip = true },
   { message = "^feat", group = "<!-- 0 -->Added" },
   { message = "^fix", group = "<!-- 1 -->Fixed" },
   { message = "^perf", group = "<!-- 2 -->Performance" },
