@@ -208,7 +208,7 @@ const CONTACT_LINK_PREFIX: &str = "meshcore://contact/add?";
 /// Clipboard", MeshCore/docs/faq.md)
 const CARD_PREFIX: &str = "meshcore://";
 
-/// A contact link, a biz card, or "<name> <pubkey>" for a companion: the key is
+/// A contact link, a biz card, or `<name> <pubkey>` for a companion: the key is
 /// the last word, so the name may have spaces
 fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     let arg = arg.trim();
