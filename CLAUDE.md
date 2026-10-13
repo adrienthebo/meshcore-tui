@@ -34,14 +34,17 @@ code.
 
 ## MeshCore protocol
 
-- `meshcore-rs` is a path dependency on `../meshcore-rs`, a local checkout. The
-  build uses whatever branch is checked out there.
+- `meshcore-rs` is a git dependency on upstream master, pinned to a commit by
+  `Cargo.lock`; `cargo update -p meshcore-rs` moves it forward. A branch that
+  needs unmerged meshcore-rs changes points at a branch on the
+  `adrienthebo/meshcore-rs` fork. `../meshcore-rs` is a local checkout for
+  working on those changes.
 - The firmware source in `../MeshCore` (upstream/main) is the authority on the
   companion protocol, mainly `examples/companion_radio/MyMesh.cpp`. Check
   meshcore-rs parsing against it before relying on it: it has decoded at
   least one push frame wrong.
-- Changes to meshcore-rs or MeshCore are minimal, follow upstream style, and
-  stay local. Never push or publish them.
+- Changes to meshcore-rs or MeshCore are minimal and follow upstream style.
+  Push them only with explicit approval, and never publish them.
 
 ## Live radio
 
