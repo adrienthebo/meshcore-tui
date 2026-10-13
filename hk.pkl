@@ -1,10 +1,54 @@
 amends "package://github.com/jdx/hk/releases/download/v2.6.0/hk@2.6.0#/Config.pkl"
+
 import "package://github.com/jdx/hk/releases/download/v2.6.0/hk@2.6.0#/Builtins.pkl"
+
+// Fast enough to run on every commit; formatters fix the staged files
+local fast = new Mapping<String, Step> {
+  ["cargo-fmt"] = Builtins.cargo_fmt
+  ["trailing-whitespace"] = Builtins.trailing_whitespace
+  ["newlines"] = Builtins.newlines
+  ["mixed-line-ending"] = Builtins.mixed_line_ending
+  ["taplo"] = Builtins.taplo_format
+  ["pkl-format"] = Builtins.pkl_format
+  ["merge-conflict"] = Builtins.check_merge_conflict
+  ["actionlint"] = Builtins.actionlint
+}
+
+// Check the whole crate, so they run before a push rather than every commit
+local slow = new Mapping<String, Step> {
+  ["clippy"] {
+    glob = List("**/*.rs", "Cargo.toml", "Cargo.lock")
+    check = "cargo clippy --locked --all-targets -- -D warnings"
+  }
+  ["test"] {
+    glob = List("**/*.rs", "src/snapshots/*.snap", "Cargo.toml", "Cargo.lock")
+    check = "cargo test --locked"
+  }
+}
 
 hooks {
   ["commit-msg"] {
     steps {
       ["conventional-commit"] = Builtins.check_conventional_commit
     }
+  }
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = fast
+  }
+  ["pre-push"] {
+    steps = slow
+  }
+  // `hk check --all` runs everything, as CI does
+  ["check"] {
+    steps {
+      ...fast
+      ...slow
+    }
+  }
+  ["fix"] {
+    fix = true
+    steps = fast
   }
 }
