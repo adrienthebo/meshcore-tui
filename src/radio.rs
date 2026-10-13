@@ -16,6 +16,42 @@ use crate::Args;
 
 // ── MeshCore Integration ─────────────────────────────────────────────────────
 
+#[cfg(feature = "ble")]
+async fn connect_ble(app: &mut App, device_name: Option<&str>) -> Option<MeshCore> {
+    match device_name {
+        Some(name) => app.sys(&format!("Scanning BLE for '{}'...", name)),
+        None => app.sys("Scanning for any MeshCore BLE device..."),
+    }
+    let name = match device_name {
+        Some(name) => Ok(name.to_string()),
+        None => MeshCore::ble_discover(Duration::from_secs(5))
+            .await
+            .and_then(|names| {
+                names
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| meshcore_rs::Error::connection("no MeshCore BLE device found"))
+            }),
+    };
+    let connected = match name {
+        Ok(name) => MeshCore::ble_connect(&name).await,
+        Err(e) => Err(e),
+    };
+    match connected {
+        Ok(mc) => Some(mc),
+        Err(e) => {
+            app.err(&format!("BLE connect failed: {}", e));
+            None
+        }
+    }
+}
+
+#[cfg(not(feature = "ble"))]
+async fn connect_ble(app: &mut App, _device_name: Option<&str>) -> Option<MeshCore> {
+    app.err("BLE connect failed: built without BLE support");
+    None
+}
+
 pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
     let mc = if let Some(ref tcp_addr) = args.tcp {
         let parts: Vec<&str> = tcp_addr.split(':').collect();
@@ -29,34 +65,8 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
                 return None;
             }
         }
-    } else if args.ble.is_some() {
-        let device_name = args.ble.as_ref().unwrap().as_deref();
-        match device_name {
-            Some(name) => app.sys(&format!("Scanning BLE for '{}'...", name)),
-            None => app.sys("Scanning for any MeshCore BLE device..."),
-        }
-        let name = match device_name {
-            Some(name) => Ok(name.to_string()),
-            None => MeshCore::ble_discover(Duration::from_secs(5))
-                .await
-                .and_then(|names| {
-                    names
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| meshcore_rs::Error::connection("no MeshCore BLE device found"))
-                }),
-        };
-        let connected = match name {
-            Ok(name) => MeshCore::ble_connect(&name).await,
-            Err(e) => Err(e),
-        };
-        match connected {
-            Ok(mc) => mc,
-            Err(e) => {
-                app.err(&format!("BLE connect failed: {}", e));
-                return None;
-            }
-        }
+    } else if let Some(ref device_name) = args.ble {
+        connect_ble(app, device_name.as_deref()).await?
     } else {
         let port = args.port.as_deref().unwrap_or("/dev/ttyACM0");
         app.port_info = port.to_string();
