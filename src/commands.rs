@@ -52,6 +52,7 @@ const COMMANDS: &[CommandSpec] = &[
         args: "<name> <pubkey> | <meshcore://contact/add link> | <meshcore:// card>",
         description: "add a contact",
     },
+    CommandSpec { name: "/contact-del", aliases: &[], args: "<name> | <pubkey>", description: "delete a contact" },
     CommandSpec { name: "/to", aliases: &[], args: "<contact_name>", description: "DM a contact" },
     CommandSpec { name: "/ch", aliases: &["/channel"], args: "<idx>", description: "switch channel" },
     CommandSpec { name: "/public", aliases: &[], args: "", description: "switch to public channel (CH#0)" },
@@ -87,6 +88,12 @@ pub enum Command {
     },
     /// A biz card: a node's signed advert packet
     ImportContact(Vec<u8>),
+    /// A contact's name or public key, resolved to a contact before it goes to the radio
+    DeleteContact(String),
+    RemoveContact {
+        name: String,
+        public_key: PublicKey,
+    },
     To(String),
     SwitchChannel(u8),
     Public,
@@ -186,6 +193,8 @@ fn parse_command(input: &str) -> Result<Command, String> {
         "/help" => Ok(Command::Help),
         "/contacts" => Ok(Command::Contacts),
         "/contact-add" => parse_add_contact(arg, spec),
+        "/contact-del" if arg.trim().is_empty() => Err(spec.usage()),
+        "/contact-del" => Ok(Command::DeleteContact(arg.trim().to_string())),
         "/to" if arg.is_empty() => Err(spec.usage()),
         "/to" => Ok(Command::To(arg.to_string())),
         "/ch" => parse_channel_index(arg, spec).map(Command::SwitchChannel),
@@ -287,9 +296,45 @@ impl App {
                 let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
                 self.err(&format!("That key is already a contact: {}", name));
             }
+            Command::DeleteContact(target) => match self.contact_to_delete(&target) {
+                Ok(contact) => {
+                    return Some(Command::RemoveContact {
+                        name: contact.adv_name.clone(),
+                        public_key: contact.public_key,
+                    })
+                }
+                Err(e) => self.err(&e),
+            },
             radio => return Some(radio),
         }
         None
+    }
+
+    /// The one contact a public key or name picks out. A name matches whole
+    /// names first, then parts of names, ignoring case; more than one match is
+    /// an error so a delete never guesses.
+    fn contact_to_delete(&self, target: &str) -> Result<&Contact, String> {
+        if let Ok(public_key) = parse_public_key(target) {
+            return self
+                .contacts
+                .iter()
+                .find(|c| c.public_key == public_key)
+                .ok_or_else(|| "No contact has that key".to_string());
+        }
+        let needle = target.to_lowercase();
+        let named = |c: &&Contact| sanitize(&c.adv_name).to_lowercase() == needle;
+        let mut matches: Vec<&Contact> = self.contacts.iter().filter(named).collect();
+        if matches.is_empty() {
+            matches = self.contacts.iter().filter(|c| sanitize(&c.adv_name).to_lowercase().contains(&needle)).collect();
+        }
+        match matches.as_slice() {
+            [contact] => Ok(contact),
+            [] => Err(format!("Contact '{}' not found", target)),
+            several => {
+                let names: Vec<String> = several.iter().map(|c| sanitize(&c.adv_name)).collect();
+                Err(format!("'{}' matches {} contacts: {}", target, several.len(), names.join(", ")))
+            }
+        }
     }
 
     fn switch_channel(&mut self, ch: u8) {
@@ -323,6 +368,14 @@ async fn add_contact(mc: &MeshCore, name: String, public_key: PublicKey, contact
     Ok(Outcome::ContactAdded { name, contacts })
 }
 
+/// Remove a contact, then reload the contact list without it
+async fn remove_contact(mc: &MeshCore, name: String, public_key: PublicKey) -> Result<Outcome, String> {
+    let commands = mc.commands().lock().await;
+    commands.remove_contact(&public_key[..]).await.map_err(|e| format!("Delete contact: {}", e))?;
+    let contacts = commands.get_contacts(0).await.map_err(|e| format!("Contacts: {}", e))?;
+    Ok(Outcome::ContactRemoved { name, contacts })
+}
+
 /// What the radio returned for a command or sent message, for the app to apply
 #[derive(Debug)]
 pub enum Outcome {
@@ -334,6 +387,10 @@ pub enum Outcome {
     /// The radio took a biz card; it handles the advert as if it heard it, so a
     /// new contact arrives as a new contact push
     ContactImported,
+    ContactRemoved {
+        name: String,
+        contacts: Vec<Contact>,
+    },
     AdvertSent,
     Battery(BatteryInfo),
     NameSet(String),
@@ -371,6 +428,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
         Command::ImportContact(card) => mc.commands().lock().await.import_contact(&card).await
             .map(|_| Outcome::ContactImported)
             .map_err(|e| format!("Import contact: {}", e)),
+        Command::RemoveContact { name, public_key } => remove_contact(mc, name, public_key).await,
         Command::Advert => mc.commands().lock().await.send_advert(true).await
             .map(|_| Outcome::AdvertSent)
             .map_err(|e| format!("Advert: {}", e)),
@@ -407,6 +465,10 @@ impl App {
                 self.set_contacts(contacts);
             }
             Outcome::ContactImported => self.sys("Contact card imported"),
+            Outcome::ContactRemoved { name, contacts } => {
+                self.sys(&format!("Deleted contact {}", sanitize(&name)));
+                self.set_contacts(contacts);
+            }
             Outcome::AdvertSent => self.sys("Advertisement sent"),
             Outcome::Battery(b) => {
                 self.battery_level = Some(b.battery_mv);
@@ -630,6 +692,67 @@ mod tests {
         let contacts = vec![contact("Bob", [1; 6])];
         app.apply_outcome(Ok(Outcome::ContactAdded { name: "Bob".to_string(), contacts }));
         assert_eq!(last_message(&app), "Added contact Bob");
+        assert_eq!(app.contacts.len(), 1);
+    }
+
+    fn app_with_bob_and_bobby() -> App {
+        let mut app = App::new(0);
+        let mut bob = contact("Bob", [1; 6]);
+        bob.public_key = key();
+        app.contacts.push(bob);
+        app.contacts.push(contact("Bobby", [2; 6]));
+        app.contacts.push(contact("Alice", [3; 6]));
+        app
+    }
+
+    fn remove_bob() -> Option<Command> {
+        Some(Command::RemoveContact { name: "Bob".to_string(), public_key: key() })
+    }
+
+    #[test]
+    fn parse_contact_del_takes_the_rest_of_the_line() {
+        assert_eq!(parse_command("/contact-del Big Bob "), Ok(Command::DeleteContact("Big Bob".to_string())));
+        assert_eq!(parse_command("/contact-del"), Err("Usage: /contact-del <name> | <pubkey>".to_string()));
+    }
+
+    #[test]
+    fn contact_del_finds_a_contact_by_key() {
+        let mut app = app_with_bob_and_bobby();
+        assert_eq!(app.apply_local(Command::DeleteContact(KEY_HEX.to_string())), remove_bob());
+        let other_key = "00".repeat(32);
+        assert_eq!(app.apply_local(Command::DeleteContact(other_key)), None);
+        assert_eq!(last_message(&app), "No contact has that key");
+    }
+
+    #[test]
+    fn contact_del_prefers_a_whole_name_over_a_partial_one() {
+        let mut app = app_with_bob_and_bobby();
+        assert_eq!(app.apply_local(Command::DeleteContact("BOB".to_string())), remove_bob());
+    }
+
+    #[test]
+    fn contact_del_takes_a_partial_name_that_matches_one_contact() {
+        let mut app = app_with_bob_and_bobby();
+        let removed = app.apply_local(Command::DeleteContact("lic".to_string()));
+        assert!(matches!(removed, Some(Command::RemoveContact { ref name, .. }) if name == "Alice"));
+    }
+
+    #[test]
+    fn contact_del_refuses_a_name_that_matches_several_contacts() {
+        let mut app = app_with_bob_and_bobby();
+        assert_eq!(app.apply_local(Command::DeleteContact("bo".to_string())), None);
+        assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
+        assert_eq!(last_message(&app), "'bo' matches 2 contacts: Bob, Bobby");
+        assert_eq!(app.apply_local(Command::DeleteContact("Zed".to_string())), None);
+        assert_eq!(last_message(&app), "Contact 'Zed' not found");
+    }
+
+    #[test]
+    fn deleted_contact_leaves_the_reloaded_list() {
+        let mut app = app_with_bob_and_bobby();
+        let contacts = vec![contact("Alice", [3; 6])];
+        app.apply_outcome(Ok(Outcome::ContactRemoved { name: "Bob".to_string(), contacts }));
+        assert_eq!(last_message(&app), "Deleted contact Bob");
         assert_eq!(app.contacts.len(), 1);
     }
 
