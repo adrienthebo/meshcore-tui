@@ -350,6 +350,19 @@ impl App {
             .unwrap_or_else(|| self.channel_label(self.active_channel))
     }
 
+    /// Longest message text, in bytes, the radio sends whole to the current target.
+    /// The firmware puts "name: " ahead of a channel message's text and cuts the
+    /// two to fit (BaseChatMesh::sendGroupMessage).
+    pub fn text_limit(&self) -> usize {
+        match self.selected_contact() {
+            Some(_) => MAX_TEXT_LEN,
+            None => {
+                let name = self.self_info.as_ref().map_or(0, |i| i.name.len());
+                MAX_TEXT_LEN.saturating_sub(name + ": ".len())
+            }
+        }
+    }
+
     /// Record a channel read from the radio at local index `idx`; returns its name,
     /// or None for an unnamed (unconfigured) slot, which is not stored
     pub fn store_channel(&mut self, idx: u8, info: &ChannelInfoData) -> Option<String> {
@@ -400,6 +413,9 @@ impl App {
             })
     }
 }
+
+/// The firmware's longest message text in bytes (MAX_TEXT_LEN, BaseChatMesh.h)
+const MAX_TEXT_LEN: usize = 160;
 
 const MAX_MESSAGES: usize = 1000;
 const MAX_PACKETS: usize = 100;
@@ -750,6 +766,18 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(app.device_name(), "Base");
+    }
+
+    #[test]
+    fn text_limit_leaves_room_for_the_name_on_channels() {
+        let mut app = app_with_contacts(1);
+        app.self_info = Some(SelfInfo {
+            name: "Base".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(app.text_limit(), 160 - "Base: ".len());
+        app.select_contact(0);
+        assert_eq!(app.text_limit(), 160);
     }
 
     #[test]

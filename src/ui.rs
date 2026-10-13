@@ -437,9 +437,17 @@ pub fn quality_span(text: String, quality: f32, theme: &Theme) -> Span<'static> 
     Span::styled(text, Style::default().fg(theme.quality(quality)))
 }
 
+/// The input title counts the bytes left once this few remain
+const BYTES_LEFT_SHOWN: usize = 20;
+
 /// The input line, with the terminal cursor in it while it has focus
 pub fn draw_input(f: &mut Frame, app: &App, input: &InputLine, theme: &Theme, focused: bool, area: Rect) {
-    let title = format!(" Send to: {} ", app.target_label());
+    let bytes_left = app.text_limit().saturating_sub(input.as_str().len());
+    let title = if bytes_left <= BYTES_LEFT_SHOWN {
+        format!(" Send to: {} · {} bytes left ", app.target_label(), bytes_left)
+    } else {
+        format!(" Send to: {} ", app.target_label())
+    };
     let border = if focused { theme.focus } else { theme.input_border };
     let w = Paragraph::new(input.as_str())
         .style(Style::default().fg(theme.text))
@@ -644,6 +652,24 @@ mod tests {
             input.insert(c);
         }
         insta::assert_snapshot!(render_panel(60, 3, |f, area| draw_input(f, &app, &input, &Theme::CLASSIC, true, area)));
+    }
+
+    #[test]
+    fn input_title_counts_bytes_left_near_the_limit() {
+        let mut app = connected_app();
+        app.select_contact(0);
+        let mut input = InputLine::default();
+        for c in "x".repeat(140).chars() {
+            input.insert(c);
+        }
+        let title = |input: &InputLine| {
+            let backend = render_panel(60, 3, |f, area| draw_input(f, &app, input, &Theme::CLASSIC, true, area));
+            let buffer = backend.buffer();
+            (0..60).map(|x| buffer[(x, 0)].symbol().to_string()).collect::<String>()
+        };
+        assert!(title(&input).contains("Send to: Alice · 20 bytes left"), "{}", title(&input));
+        input.backspace();
+        assert!(!title(&input).contains("bytes left"), "{}", title(&input));
     }
 
     // ── Radio panel ──────────────────────────────────────────────────────────

@@ -89,10 +89,11 @@ impl View for InputLine {
         draw_input(f, app, self, theme, focused, area);
     }
 
-    /// Edit the line; Enter submits it
-    fn handle_key(&mut self, key: KeyEvent, _app: &App) -> KeyResult {
+    /// Edit the line, refusing chars past the radio's limit; Enter submits it
+    fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match key.code {
             KeyCode::Enter if !self.is_empty() => return KeyResult::Action(Action::Submit(self.take())),
+            KeyCode::Char(c) if self.text.len() + c.len_utf8() > app.text_limit() => {}
             KeyCode::Char(c) => self.insert(c),
             KeyCode::Backspace => self.backspace(),
             KeyCode::Left => self.left(),
@@ -211,6 +212,16 @@ mod tests {
         press(&mut line, KeyCode::Home);
         press(&mut line, KeyCode::Char('>'));
         assert_eq!(line.as_str(), ">hi");
+    }
+
+    #[test]
+    fn chars_past_the_byte_limit_are_refused_whole() {
+        let mut line = typed(&"x".repeat(App::new(0).text_limit() - 2));
+        assert_eq!(press(&mut line, KeyCode::Char('🖖')), KeyResult::Handled);
+        assert_eq!(press(&mut line, KeyCode::Char('é')), KeyResult::Handled);
+        assert!(line.as_str().ends_with("xé"));
+        press(&mut line, KeyCode::Char('x'));
+        assert!(line.as_str().ends_with("xé"));
     }
 
     #[test]
