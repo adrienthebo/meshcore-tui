@@ -1,6 +1,9 @@
 [tools]
 hk = "2.6.0"
 git-cliff = "2.14.2"
+taplo = "0.10.0"
+pkl = "0.32.1"
+actionlint = "1.7.12"
 
 [tasks.init]
 description = "Install git hooks and repo git config"
