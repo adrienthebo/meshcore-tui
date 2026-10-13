@@ -69,6 +69,12 @@ const COMMANDS: &[CommandSpec] = &[
         description: "delete a contact",
     },
     CommandSpec {
+        name: "/login",
+        aliases: &[],
+        args: "<room> [password]",
+        description: "log in to a room server",
+    },
+    CommandSpec {
         name: "/to",
         aliases: &[],
         args: "<contact_name>",
@@ -159,6 +165,15 @@ pub enum Command {
         name: String,
         public_key: PublicKey,
     },
+    /// A room server's name or public key, resolved to a contact before it goes to the radio
+    Login {
+        room: String,
+        password: String,
+    },
+    SendLogin {
+        public_key: PublicKey,
+        password: String,
+    },
     To(String),
     SwitchChannel(u8),
     Public,
@@ -200,6 +215,55 @@ fn parse_public_key(hex: &str) -> Result<PublicKey, String> {
 
 /// Contact type for a companion radio (ADV_TYPE_CHAT)
 const COMPANION: u8 = 1;
+
+/// Contact type for a room server (ADV_TYPE_ROOM)
+const ROOM: u8 = 3;
+
+/// Which contacts a command can pick
+#[derive(Clone, Copy)]
+enum Kind {
+    Contact,
+    Room,
+}
+
+impl Kind {
+    fn includes(self, contact: &Contact) -> bool {
+        match self {
+            Kind::Contact => true,
+            Kind::Room => contact.contact_type == ROOM,
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Kind::Contact => "contact",
+            Kind::Room => "room server",
+        }
+    }
+}
+
+/// The firmware sends at most this much of a login password (BaseChatMesh::sendLogin)
+const MAX_PASSWORD_LEN: usize = 15;
+
+/// "<room> [password]": the room is the first word, the password the rest
+fn parse_login(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return Err(spec.usage());
+    }
+    let (room, password) = arg.split_once(' ').unwrap_or((arg, ""));
+    let password = password.trim();
+    if password.len() > MAX_PASSWORD_LEN {
+        return Err(format!(
+            "Room passwords are at most {} bytes",
+            MAX_PASSWORD_LEN
+        ));
+    }
+    Ok(Command::Login {
+        room: room.to_string(),
+        password: password.to_string(),
+    })
+}
 
 /// The MeshCore app's contact QR link (MeshCore/docs/qr_codes.md)
 const CONTACT_LINK_PREFIX: &str = "meshcore://contact/add?";
@@ -273,6 +337,7 @@ fn parse_command(input: &str) -> Result<Command, String> {
         "/contact-add" => parse_add_contact(arg, spec),
         "/contact-del" if arg.trim().is_empty() => Err(spec.usage()),
         "/contact-del" => Ok(Command::DeleteContact(arg.trim().to_string())),
+        "/login" => parse_login(arg, spec),
         "/to" if arg.is_empty() => Err(spec.usage()),
         "/to" => Ok(Command::To(arg.to_string())),
         "/ch" => parse_channel_index(arg, spec).map(Command::SwitchChannel),
@@ -380,11 +445,20 @@ impl App {
                 let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
                 self.err(&format!("That key is already a contact: {}", name));
             }
-            Command::DeleteContact(target) => match self.contact_to_delete(&target) {
+            Command::DeleteContact(target) => match self.find_contact(&target, Kind::Contact) {
                 Ok(contact) => {
                     return Some(Command::RemoveContact {
                         name: contact.adv_name.clone(),
                         public_key: contact.public_key,
+                    })
+                }
+                Err(e) => self.err(&e),
+            },
+            Command::Login { room, password } => match self.find_contact(&room, Kind::Room) {
+                Ok(contact) => {
+                    return Some(Command::SendLogin {
+                        public_key: contact.public_key,
+                        password,
                     })
                 }
                 Err(e) => self.err(&e),
@@ -394,36 +468,34 @@ impl App {
         None
     }
 
-    /// The one contact a public key or name picks out. A name matches whole
-    /// names first, then parts of names, ignoring case; more than one match is
-    /// an error so a delete never guesses.
-    fn contact_to_delete(&self, target: &str) -> Result<&Contact, String> {
+    /// The one contact of `kind` a public key or name picks out. A name
+    /// matches whole names first, then parts of names, ignoring case; more than
+    /// one match is an error so a command never guesses.
+    fn find_contact(&self, target: &str, kind: Kind) -> Result<&Contact, String> {
+        let candidates = || self.contacts.iter().filter(|c| kind.includes(c));
         if let Ok(public_key) = parse_public_key(target) {
-            return self
-                .contacts
-                .iter()
+            return candidates()
                 .find(|c| c.public_key == public_key)
-                .ok_or_else(|| "No contact has that key".to_string());
+                .ok_or_else(|| format!("No {} has that key", kind.noun()));
         }
         let needle = target.to_lowercase();
         let named = |c: &&Contact| sanitize(&c.adv_name).to_lowercase() == needle;
-        let mut matches: Vec<&Contact> = self.contacts.iter().filter(named).collect();
+        let mut matches: Vec<&Contact> = candidates().filter(named).collect();
         if matches.is_empty() {
-            matches = self
-                .contacts
-                .iter()
+            matches = candidates()
                 .filter(|c| sanitize(&c.adv_name).to_lowercase().contains(&needle))
                 .collect();
         }
         match matches.as_slice() {
             [contact] => Ok(contact),
-            [] => Err(format!("Contact '{}' not found", target)),
+            [] => Err(format!("No {} matches '{}'", kind.noun(), target)),
             several => {
                 let names: Vec<String> = several.iter().map(|c| sanitize(&c.adv_name)).collect();
                 Err(format!(
-                    "'{}' matches {} contacts: {}",
+                    "'{}' matches {} {}s: {}",
                     target,
                     several.len(),
+                    kind.noun(),
                     names.join(", ")
                 ))
             }
@@ -500,6 +572,25 @@ async fn remove_contact(
     Ok(Outcome::ContactRemoved { name, contacts })
 }
 
+/// Send a login; the room server's reply comes later as a push
+async fn send_login(
+    mc: &MeshCore,
+    public_key: PublicKey,
+    password: &str,
+) -> Result<Outcome, String> {
+    let info = mc
+        .commands()
+        .lock()
+        .await
+        .send_login(&public_key[..], password)
+        .await
+        .map_err(|e| format!("Login: {}", e))?;
+    Ok(Outcome::LoginSent {
+        public_key,
+        timeout_ms: info.suggested_timeout,
+    })
+}
+
 /// What the radio returned for a command or sent message, for the app to apply
 #[derive(Debug)]
 pub enum Outcome {
@@ -515,6 +606,13 @@ pub enum Outcome {
         name: String,
         contacts: Vec<Contact>,
     },
+    /// The radio sent a login; the radio estimates the reply within `timeout_ms`
+    LoginSent {
+        public_key: PublicKey,
+        timeout_ms: u32,
+    },
+    /// A login's wait for a reply ran out
+    LoginTimedOut(PublicKey),
     AdvertSent,
     Battery(BatteryInfo),
     NameSet(String),
@@ -567,6 +665,10 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             .map(|_| Outcome::ContactImported)
             .map_err(|e| format!("Import contact: {}", e)),
         Command::RemoveContact { name, public_key } => remove_contact(mc, name, public_key).await,
+        Command::SendLogin {
+            public_key,
+            password,
+        } => send_login(mc, public_key, &password).await,
         Command::Advert => mc
             .commands()
             .lock()
@@ -628,6 +730,8 @@ impl App {
                 self.sys(&format!("Deleted contact {}", sanitize(&name)));
                 self.set_contacts(contacts);
             }
+            Outcome::LoginSent { public_key, .. } => self.on_login_sent(public_key),
+            Outcome::LoginTimedOut(public_key) => self.on_login_timed_out(public_key),
             Outcome::AdvertSent => self.sys("Advertisement sent"),
             Outcome::Battery(b) => {
                 self.battery_level = Some(b.battery_mv);
@@ -983,7 +1087,67 @@ mod tests {
             app.apply_local(Command::DeleteContact("Zed".to_string())),
             None
         );
-        assert_eq!(last_message(&app), "Contact 'Zed' not found");
+        assert_eq!(last_message(&app), "No contact matches 'Zed'");
+    }
+
+    fn login(room: &str, password: &str) -> Command {
+        Command::Login {
+            room: room.to_string(),
+            password: password.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_login_takes_the_first_word_as_the_room() {
+        assert_eq!(
+            parse_command("/login PBR/S1 hunter2"),
+            Ok(login("PBR/S1", "hunter2"))
+        );
+        assert_eq!(parse_command("/login PBR/S1"), Ok(login("PBR/S1", "")));
+        assert_eq!(
+            parse_command("/login"),
+            Err("Usage: /login <room> [password]".to_string())
+        );
+        assert_eq!(
+            parse_command("/login PBR/S1 0123456789abcdef"),
+            Err("Room passwords are at most 15 bytes".to_string())
+        );
+    }
+
+    #[test]
+    fn login_picks_only_room_servers() {
+        let mut app = app_with_bob_and_bobby();
+        let mut room = contact("Bob's Room", [4; 6]);
+        room.contact_type = ROOM;
+        app.contacts.push(room);
+        let sent = app.apply_local(login("bob", "pw"));
+        assert!(
+            matches!(sent, Some(Command::SendLogin { public_key, ref password })
+            if public_key[..6] == [4; 6] && password == "pw")
+        );
+        assert_eq!(app.apply_local(login("Alice", "")), None);
+        assert_eq!(last_message(&app), "No room server matches 'Alice'");
+    }
+
+    #[test]
+    fn login_outcomes_report_a_missing_reply_once() {
+        let mut app = App::new(0);
+        let room = contact("Room", [4; 6]);
+        let public_key = room.public_key;
+        app.contacts.push(room);
+        app.apply_outcome(Ok(Outcome::LoginSent {
+            public_key,
+            timeout_ms: 5000,
+        }));
+        assert_eq!(last_message(&app), "Logging in to Room…");
+        app.apply_outcome(Ok(Outcome::LoginTimedOut(public_key)));
+        assert_eq!(
+            last_message(&app),
+            "No reply from Room: wrong password, or out of range"
+        );
+        let count = app.messages.len();
+        app.apply_outcome(Ok(Outcome::LoginTimedOut(public_key)));
+        assert_eq!(app.messages.len(), count);
     }
 
     #[test]
