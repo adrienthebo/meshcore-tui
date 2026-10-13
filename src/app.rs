@@ -73,11 +73,32 @@ impl PacketKind {
     }
 }
 
+/// The radio's stored route to a contact
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Route {
+    /// No stored route, so messages to the contact flood (OUT_PATH_UNKNOWN)
+    Flood,
+    /// `count` hops, each named by a `hash_size`-byte prefix of its key
+    Hops { count: u8, hash_size: u8 },
+}
+
+impl Route {
+    /// Decode a contact's out_path_len byte: bits 0-5 hold the hop count and bits
+    /// 6-7 the hash size less one (Packet.h); 0xFF means no route (ContactInfo.h)
+    pub fn from_path_len(path_len: i8) -> Self {
+        match path_len as u8 {
+            0xff => Route::Flood,
+            byte => Route::Hops { count: byte & 0x3f, hash_size: (byte >> 6) + 1 },
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PacketLogEntry {
     pub timestamp: String,
     pub kind: PacketKind,
-    pub hops: u8,
+    /// Our route to the contact, on a new contact's advert
+    pub route: Option<Route>,
     pub rssi: i16,
     pub snr: f32,
     pub info: String,
@@ -150,11 +171,11 @@ impl App {
     }
 
     /// Append a packet log entry, dropping the oldest beyond MAX_PACKETS
-    fn push_packet(&mut self, kind: PacketKind, hops: u8, info: String) {
+    fn push_packet(&mut self, kind: PacketKind, route: Option<Route>, info: String) {
         self.packets.push(PacketLogEntry {
             timestamp: now(),
             kind,
-            hops,
+            route,
             rssi: 0,
             snr: 0.0,
             info,
@@ -245,7 +266,7 @@ impl App {
     /// A known contact advertised again; the push carries only their key
     fn on_advertisement(&mut self, adv: &AdvertisementData) {
         let who = self.resolve_key(&adv.public_key);
-        self.push_packet(PacketKind::Advert, 0, who.clone());
+        self.push_packet(PacketKind::Advert, None, who.clone());
         self.push_advert(who, None);
     }
 
@@ -257,20 +278,20 @@ impl App {
             contact.latitude(),
             contact.longitude(),
         );
-        self.push_packet(PacketKind::Advert, hop_count(contact.path_len), info);
+        self.push_packet(PacketKind::Advert, Some(Route::from_path_len(contact.path_len)), info);
         self.push_advert(sanitize(&contact.adv_name), Some(contact.clone()));
         self.contacts.retain(|c| c.prefix() != contact.prefix());
         self.contacts.push(contact);
     }
 
     fn on_ack(&mut self, tag: &[u8; 4]) {
-        self.push_packet(PacketKind::Ack, 0, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
+        self.push_packet(PacketKind::Ack, None, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
     }
 
     /// The radio found a new route to a contact; the push carries only their key
     fn on_path_update(&mut self, pu: &PathUpdateData) {
         let who = self.resolve_key(&pu.public_key);
-        self.push_packet(PacketKind::Path, 0, who);
+        self.push_packet(PacketKind::Path, None, who);
     }
 
     /// Name the contact with this public key, falling back to its prefix in hex
@@ -289,7 +310,7 @@ impl App {
             meshcore_rs::parsing::hex_encode(&info.expected_ack),
             info.suggested_timeout
         );
-        self.push_packet(PacketKind::Sent, 0, packet_info);
+        self.push_packet(PacketKind::Sent, None, packet_info);
     }
 
     pub fn on_channel_sent(&mut self, channel: u8, text: &str) {
@@ -421,11 +442,6 @@ const MAX_MESSAGES: usize = 1000;
 const MAX_PACKETS: usize = 100;
 const MAX_ADVERTS: usize = 100;
 
-/// Hop count for display; a negative path length means the path is unknown (flood)
-fn hop_count(path_len: i8) -> u8 {
-    path_len.max(0) as u8
-}
-
 fn now() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
@@ -547,16 +563,25 @@ mod tests {
         let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
         assert_eq!(names, vec!["Other", "New name"]);
         assert_eq!(last_packet(&app).kind, PacketKind::Advert);
-        assert_eq!(last_packet(&app).hops, 2);
+        assert_eq!(last_packet(&app).route, Some(Route::Hops { count: 2, hash_size: 1 }));
     }
 
     #[test]
-    fn new_contact_with_flood_path_logs_zero_hops() {
+    fn new_contact_with_flood_path_logs_a_flood_route() {
         let mut app = App::new(0);
         let mut flood = contact("Flood", [1; 6]);
         flood.path_len = -1;
         app.on_new_contact(flood);
-        assert_eq!(last_packet(&app).hops, 0);
+        assert_eq!(last_packet(&app).route, Some(Route::Flood));
+    }
+
+    #[test]
+    fn route_decodes_the_hash_size_from_the_top_bits() {
+        assert_eq!(Route::from_path_len(0x03), Route::Hops { count: 3, hash_size: 1 });
+        assert_eq!(Route::from_path_len(0x43), Route::Hops { count: 3, hash_size: 2 });
+        assert_eq!(Route::from_path_len(0x82u8 as i8), Route::Hops { count: 2, hash_size: 3 });
+        assert_eq!(Route::from_path_len(0), Route::Hops { count: 0, hash_size: 1 });
+        assert_eq!(Route::from_path_len(-1), Route::Flood);
     }
 
     #[test]

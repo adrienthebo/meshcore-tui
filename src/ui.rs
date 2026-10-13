@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, MsgType, PacketKind};
+use crate::app::{App, MsgType, PacketKind, Route};
 use crate::tab_bar::TabBar;
 use crate::text::{format_duration, sanitize, truncate_to_width, wrap_to_width};
 use crate::theme::Theme;
@@ -292,7 +292,11 @@ pub fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area
                     Style::default().fg(tc).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!(" H:{}", p.hops),
+                    match p.route {
+                        Some(Route::Flood) => " \u{2192}flood".to_string(),
+                        Some(Route::Hops { count, .. }) => format!(" \u{2192}{}h", count),
+                        None => String::new(),
+                    },
                     Style::default().fg(theme.muted),
                 ),
                 Span::styled(
@@ -496,11 +500,11 @@ mod tests {
         }
     }
 
-    fn packet(kind: PacketKind, hops: u8, info: &str) -> PacketLogEntry {
+    fn packet(kind: PacketKind, route: Option<Route>, info: &str) -> PacketLogEntry {
         PacketLogEntry {
             timestamp: "12:34:56".to_string(),
             kind,
-            hops,
+            route,
             rssi: 0,
             snr: 0.0,
             info: info.to_string(),
@@ -533,9 +537,9 @@ mod tests {
             chat_message("ERR", "Send failed: timeout", MsgType::Error),
         ];
         app.packets = vec![
-            packet(PacketKind::Advert, 0, "Repeater @52.0089,4.3531"),
-            packet(PacketKind::Ack, 0, "tag:deadbeef"),
-            packet(PacketKind::Path, 2, "a1a1a1a1a1a1 len=2"),
+            packet(PacketKind::Advert, Some(Route::Hops { count: 2, hash_size: 1 }), "Repeater @52.0089,4.3531"),
+            packet(PacketKind::Ack, None, "tag:deadbeef"),
+            packet(PacketKind::Path, None, "a1a1a1a1a1a1 len=2"),
         ];
         app
     }
@@ -625,7 +629,7 @@ mod tests {
     #[test]
     fn packets_show_newest_when_overflowing() {
         let mut app = App::new(0);
-        app.packets = (0..10).map(|i| packet(PacketKind::Ack, 0, &format!("packet {}", i))).collect();
+        app.packets = (0..10).map(|i| packet(PacketKind::Ack, None, &format!("packet {}", i))).collect();
         // 5 rows minus borders leaves 3 visible packets: 7..=9
         let rows = rows(&render_panel(60, 5, |f, area| draw_packets(f, &app, &Theme::CLASSIC, false, area)));
         assert!(rows[1].contains("packet 7"));
@@ -636,10 +640,10 @@ mod tests {
     #[test]
     fn packets_show_signal_only_when_known() {
         let mut app = App::new(0);
-        let mut heard = packet(PacketKind::Advert, 1, "heard");
+        let mut heard = packet(PacketKind::Advert, Some(Route::Flood), "heard");
         heard.rssi = -92;
         heard.snr = 5.25;
-        app.packets = vec![packet(PacketKind::Ack, 0, "no signal"), heard];
+        app.packets = vec![packet(PacketKind::Ack, None, "no signal"), heard];
         insta::assert_snapshot!(render_panel(60, 4, |f, area| draw_packets(f, &app, &Theme::CLASSIC, false, area)));
     }
 
