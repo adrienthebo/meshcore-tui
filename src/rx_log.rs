@@ -69,9 +69,29 @@ impl RxLog {
     }
 }
 
+/// Payload types by what they carry; "?" is a type meshcore-rs doesn't know
+pub fn payload_type_label(payload_type: PayloadType) -> &'static str {
+    match payload_type {
+        PayloadType::Req => "Request",
+        PayloadType::Response => "Response",
+        PayloadType::TextMsg => "DM",
+        PayloadType::Ack => "Ack",
+        PayloadType::Advert => "Advert",
+        PayloadType::GroupText => "Channel",
+        PayloadType::GroupData => "Chan data",
+        PayloadType::AnonReq => "Anon req",
+        PayloadType::Path => "Path",
+        PayloadType::Trace => "Trace",
+        PayloadType::Multipart => "Multipart",
+        PayloadType::Control => "Control",
+        PayloadType::RawCustom => "Custom",
+        PayloadType::Unknown => "?",
+    }
+}
+
 /// Payload types by their names in the firmware's PAYLOAD_TYPE_* (Packet.h);
 /// "?" is a type meshcore-rs doesn't know
-pub fn payload_type_label(payload_type: PayloadType) -> &'static str {
+fn payload_type_name(payload_type: PayloadType) -> &'static str {
     match payload_type {
         PayloadType::Req => "REQ",
         PayloadType::Response => "RESPONSE",
@@ -128,9 +148,10 @@ impl PacketLayout {
         }
         let mut layout = Self::default();
         layout.push("header", &[header_byte(header)], format!(
-            "route {} · type {} · ver {}",
+            "route {} · type {} ({}) · ver {}",
             route_label(header.route_type),
             payload_type_label(header.payload_type),
+            payload_type_name(header.payload_type),
             header.payload_version
         ));
         if let Some(code) = header.transport_code {
@@ -346,7 +367,7 @@ mod tests {
         let fields: Vec<(&str, usize, usize, &str)> =
             layout.fields.iter().map(|f| (f.name, f.offset, f.len, f.value.as_str())).collect();
         assert_eq!(fields, [
-            ("header", 0, 1, "route t-direct · type ACK · ver 1"),
+            ("header", 0, 1, "route t-direct · type Ack (ACK) · ver 1"),
             ("transport code", 1, 4, "01020304"),
             ("path len", 5, 1, "2 hops × 2 bytes"),
             ("path", 6, 4, "aabb,ccdd"),
