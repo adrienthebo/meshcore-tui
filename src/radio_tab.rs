@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::stats::{ClockReading, HISTORY_SECS};
 use crate::theme::Theme;
 use crate::text::{format_duration, sanitize};
-use crate::ui::{noise_quality, panel, rssi_quality, snr_quality};
+use crate::ui::{noise_quality, panel, quality_span, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
 /// Rows for the two rows of reading panels under the charts
@@ -112,11 +112,11 @@ fn draw_readings(f: &mut Frame, theme: &Theme, title: impl Into<Line<'static>>, 
 fn draw_signal(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let last = app.radio_stats.packet_signals.back();
     let rssi = match last {
-        Some(p) => Span::styled(format!("{} dBm", p.rssi), Style::default().fg(theme.quality(rssi_quality(p.rssi)))),
+        Some(p) => quality_span(format!("{} dBm", p.rssi), rssi_quality(p.rssi), theme),
         None => value(theme, UNKNOWN),
     };
     let snr = match last {
-        Some(p) => Span::styled(format!("{:.2} dB", p.snr), Style::default().fg(theme.quality(snr_quality(p.snr)))),
+        Some(p) => quality_span(format!("{:.2} dB", p.snr), snr_quality(p.snr), theme),
         None => value(theme, UNKNOWN),
     };
     let queue = app.diagnostics.core.map_or(UNKNOWN.to_string(), |core| core.queue_len.to_string());
@@ -363,10 +363,7 @@ fn draw_noise_chart(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     let title = Line::from(vec![
         Span::raw(" Noise floor "),
-        Span::styled(
-            format!("{} dBm", latest.noise_floor),
-            Style::default().fg(theme.quality(noise_quality(latest.noise_floor))),
-        ),
+        quality_span(format!("{} dBm", latest.noise_floor), noise_quality(latest.noise_floor), theme),
         Span::styled(format!("  (min {} dBm / max {} dBm) ", min, max), Style::default().fg(theme.text)),
     ]);
     let (low, high) = padded_bounds([min as f64, max as f64].into_iter(), 10.0).unwrap();
@@ -402,7 +399,7 @@ fn draw_snr_chart(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
 
     let title = Line::from(vec![
         Span::raw(" SNR "),
-        Span::styled(format!("{:.2} dB ", last.snr), Style::default().fg(theme.quality(snr_quality(last.snr)))),
+        quality_span(format!("{:.2} dB ", last.snr), snr_quality(last.snr), theme),
     ]);
     let points: Vec<(f64, f64)> = signals.iter().map(|p| ((p.at - now) as f64, p.snr as f64)).collect();
     let (low, high) = padded_bounds(points.iter().map(|(_, snr)| *snr), 5.0).unwrap();

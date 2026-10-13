@@ -366,7 +366,7 @@ pub fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let noise_colour = |dbm: i16| theme.quality(noise_quality(dbm));
     let header = Line::from(vec![
         Span::styled("Noise ", Style::default().fg(theme.text)),
-        Span::styled(format!("{} dBm", latest.noise_floor), Style::default().fg(noise_colour(latest.noise_floor))),
+        quality_span(format!("{} dBm", latest.noise_floor), noise_quality(latest.noise_floor), theme),
         Span::styled(range, Style::default().fg(theme.text)),
     ]);
     f.render_widget(Paragraph::new(header), rows[0]);
@@ -388,13 +388,11 @@ pub fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     f.render_widget(sparkline, rows[1]);
 
     let muted = Style::default().fg(theme.muted);
-    let rssi_colour = theme.quality(rssi_quality(latest.last_rssi.into()));
-    let snr_colour = theme.quality(snr_quality(latest.last_snr));
     let footer = Line::from(vec![
         Span::styled("RSSI ", muted),
-        Span::styled(format!("{} dBm", latest.last_rssi), Style::default().fg(rssi_colour)),
+        quality_span(format!("{} dBm", latest.last_rssi), rssi_quality(latest.last_rssi.into()), theme),
         Span::styled("  SNR ", muted),
-        Span::styled(format!("{:.2} dB", latest.last_snr), Style::default().fg(snr_colour)),
+        quality_span(format!("{:.2} dB", latest.last_snr), snr_quality(latest.last_snr), theme),
         Span::styled(
             format!(
                 "   Air TX {} RX {}",
@@ -432,6 +430,11 @@ pub fn snr_quality(db: f32) -> f32 {
 /// Noise floor, where lower is better, down to the firmware's lowest reading of -120 dBm
 pub fn noise_quality(dbm: i16) -> f32 {
     quality(dbm as f32, -90.0, -120.0)
+}
+
+/// `text` in the colour for a reading's quality, from 0.0 (poor) to 1.0 (good)
+pub fn quality_span(text: String, quality: f32, theme: &Theme) -> Span<'static> {
+    Span::styled(text, Style::default().fg(theme.quality(quality)))
 }
 
 /// The input line, with the terminal cursor in it while it has focus

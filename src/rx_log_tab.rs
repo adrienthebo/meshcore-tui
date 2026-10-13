@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::rx_log::{payload_type_label, route_label, Field, PacketLayout, RxPacket};
 use crate::text::sanitize;
 use crate::theme::Theme;
-use crate::ui::{length_quality, panel, rssi_quality, snr_quality};
+use crate::ui::{length_quality, panel, quality_span, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
 /// Shown in place of a part of the packet the radio didn't send
@@ -208,12 +208,12 @@ fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let hops_colour = header.map_or(theme.text, |h| hash_size_colour(h.path_hash_size, theme));
     Row::new([
         Cell::from(packet.timestamp.clone()),
-        Cell::from(Span::styled(format!("{:>6.2}", snr), Style::default().fg(theme.quality(snr_quality(snr))))),
-        Cell::from(Span::styled(format!("{:>4}", rssi), Style::default().fg(theme.quality(rssi_quality(rssi))))),
+        Cell::from(quality_span(format!("{:>6.2}", snr), snr_quality(snr), theme)),
+        Cell::from(quality_span(format!("{:>4}", rssi), rssi_quality(rssi), theme)),
         Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
         Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
         Cell::from(Span::styled(format!("{:>4}", hops), Style::default().fg(hops_colour))),
-        Cell::from(Span::styled(format!("{:>4}", len), Style::default().fg(theme.quality(length_quality(len))))),
+        Cell::from(quality_span(format!("{:>4}", len), length_quality(len), theme)),
         Cell::from(summary(packet)),
     ])
 }
