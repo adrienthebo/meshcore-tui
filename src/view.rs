@@ -73,7 +73,9 @@ impl Ui {
     pub fn handle_key(&mut self, key: KeyEvent, app: &App) -> Option<Action> {
         match key.code {
             KeyCode::Esc => Some(Action::Quit),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Action::Quit)
+            }
             KeyCode::F(number) => {
                 if let Some(tab) = self.tab_for_f_key(number) {
                     self.active = tab;
@@ -99,7 +101,9 @@ impl Ui {
 
     /// Index of the tab an F-key shows: F1 is the first in the tab bar
     fn tab_for_f_key(&self, number: u8) -> Option<usize> {
-        (number as usize).checked_sub(1).filter(|&tab| tab < self.tabs.len())
+        (number as usize)
+            .checked_sub(1)
+            .filter(|&tab| tab < self.tabs.len())
     }
 }
 
@@ -141,8 +145,14 @@ mod tests {
         let app = App::new(0);
         for tab in 0..2 {
             ui.active = tab;
-            assert_eq!(ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app), Some(Action::Quit));
-            assert_eq!(ui.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &app), Some(Action::Quit));
+            assert_eq!(
+                ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app),
+                Some(Action::Quit)
+            );
+            assert_eq!(
+                ui.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &app),
+                Some(Action::Quit)
+            );
         }
     }
 
@@ -161,7 +171,10 @@ mod tests {
         let mut ui = ui_with_probe();
         let app = App::new(0);
         for number in [0, 3, 12] {
-            assert_eq!(ui.handle_key(key(KeyCode::F(number), KeyModifiers::NONE), &app), None);
+            assert_eq!(
+                ui.handle_key(key(KeyCode::F(number), KeyModifiers::NONE), &app),
+                None
+            );
             assert_eq!(ui.active, 0);
         }
     }
@@ -169,7 +182,10 @@ mod tests {
     #[test]
     fn key_hints_add_the_shared_keys_to_the_tabs() {
         let mut ui = ui_with_probe();
-        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "F#=tab", "Esc=quit"]);
+        assert_eq!(
+            ui.key_hints(),
+            ["Enter=send", "Tab=panel", "F#=tab", "Esc=quit"]
+        );
         ui.active = 1;
         assert_eq!(ui.key_hints(), ["F#=tab", "Esc=quit"]);
         // With one tab there's nothing to switch to
@@ -187,6 +203,9 @@ mod tests {
             ui.handle_key(key(KeyCode::Char('x'), KeyModifiers::NONE), &app),
             Some(Action::Submit("x".to_string()))
         );
-        assert_eq!(ui.handle_key(key(KeyCode::Char('y'), KeyModifiers::NONE), &app), None);
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Char('y'), KeyModifiers::NONE), &app),
+            None
+        );
     }
 }

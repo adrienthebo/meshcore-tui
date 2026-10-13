@@ -191,7 +191,10 @@ mod tests {
         assert_eq!(overview.focus, Panel::Input);
         press(&mut overview, &app, KeyCode::Char('a'));
         overview.focus = Panel::Contacts;
-        assert_eq!(press(&mut overview, &app, KeyCode::Char('b')), KeyResult::Ignored);
+        assert_eq!(
+            press(&mut overview, &app, KeyCode::Char('b')),
+            KeyResult::Ignored
+        );
         assert_eq!(overview.input.as_str(), "a");
     }
 
@@ -221,15 +224,29 @@ mod tests {
             press(&mut overview, &app, KeyCode::Tab);
             order.push(overview.focus.clone());
         }
-        assert_eq!(order, [Panel::Messages, Panel::Contacts, Panel::Packets, Panel::Input]);
+        assert_eq!(
+            order,
+            [
+                Panel::Messages,
+                Panel::Contacts,
+                Panel::Packets,
+                Panel::Input
+            ]
+        );
     }
 
     #[test]
     fn arrows_reach_the_contact_list_only_while_it_has_focus() {
         let (mut overview, app) = (Overview::default(), app_with_contacts(3));
-        assert_eq!(press(&mut overview, &app, KeyCode::Down), KeyResult::Ignored);
+        assert_eq!(
+            press(&mut overview, &app, KeyCode::Down),
+            KeyResult::Ignored
+        );
         overview.focus = Panel::Contacts;
-        assert_eq!(press(&mut overview, &app, KeyCode::Down), KeyResult::Action(Action::SelectContact(0)));
+        assert_eq!(
+            press(&mut overview, &app, KeyCode::Down),
+            KeyResult::Action(Action::SelectContact(0))
+        );
     }
 
     #[test]
@@ -249,21 +266,39 @@ mod tests {
         let mut app = app_with_contacts(3);
         let mut list = ContactList;
         app.select_contact(2);
-        assert_eq!(press(&mut list, &app, KeyCode::Down), KeyResult::Action(Action::SelectContact(2)));
-        assert_eq!(press(&mut list, &app, KeyCode::Up), KeyResult::Action(Action::SelectContact(1)));
+        assert_eq!(
+            press(&mut list, &app, KeyCode::Down),
+            KeyResult::Action(Action::SelectContact(2))
+        );
+        assert_eq!(
+            press(&mut list, &app, KeyCode::Up),
+            KeyResult::Action(Action::SelectContact(1))
+        );
         app.select_contact(0);
-        assert_eq!(press(&mut list, &app, KeyCode::Up), KeyResult::Action(Action::SelectContact(0)));
+        assert_eq!(
+            press(&mut list, &app, KeyCode::Up),
+            KeyResult::Action(Action::SelectContact(0))
+        );
     }
 
     #[test]
     fn contact_arrows_with_no_selection_select_the_first() {
         let app = app_with_contacts(2);
-        assert_eq!(press(&mut ContactList, &app, KeyCode::Up), KeyResult::Action(Action::SelectContact(0)));
-        assert_eq!(press(&mut ContactList, &app, KeyCode::Down), KeyResult::Action(Action::SelectContact(0)));
+        assert_eq!(
+            press(&mut ContactList, &app, KeyCode::Up),
+            KeyResult::Action(Action::SelectContact(0))
+        );
+        assert_eq!(
+            press(&mut ContactList, &app, KeyCode::Down),
+            KeyResult::Action(Action::SelectContact(0))
+        );
     }
 
     #[test]
     fn contact_list_ignores_other_keys() {
-        assert_eq!(press(&mut ContactList, &App::new(0), KeyCode::Char('a')), KeyResult::Ignored);
+        assert_eq!(
+            press(&mut ContactList, &App::new(0), KeyCode::Char('a')),
+            KeyResult::Ignored
+        );
     }
 }

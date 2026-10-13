@@ -86,7 +86,9 @@ impl View for RxLogTab {
             (KeyCode::Down, Section::Packets) => self.browse(app, Step::Down),
             (KeyCode::Up, Section::Fields) => self.field = self.field.saturating_sub(1),
             (KeyCode::Down, Section::Fields) => {
-                let fields = self.shown_layout(app).map_or(0, |layout| layout.fields.len());
+                let fields = self
+                    .shown_layout(app)
+                    .map_or(0, |layout| layout.fields.len());
                 self.field = (self.field + 1).min(fields.saturating_sub(1));
             }
             _ => return KeyResult::Ignored,
@@ -100,7 +102,11 @@ impl View for RxLogTab {
             (Section::Packets, Some(_)) => vec!["↑↓=browse", "Home=newest", "Tab=panel"],
             (Section::Fields, _) => vec!["↑↓=field", "Home=newest", "Tab=panel"],
         };
-        hints.push(if self.paused.is_some() { "p=resume" } else { "p=pause" });
+        hints.push(if self.paused.is_some() {
+            "p=resume"
+        } else {
+            "p=pause"
+        });
         hints
     }
 }
@@ -148,7 +154,8 @@ impl RxLogTab {
 
     /// The packet the fields show: the browsed one, else the newest
     fn shown_packet<'a>(&self, app: &'a App) -> Option<&'a RxPacket> {
-        self.browsed_packet(app).or_else(|| self.newest_first(app).next())
+        self.browsed_packet(app)
+            .or_else(|| self.newest_first(app).next())
     }
 
     fn shown_layout(&self, app: &App) -> Option<PacketLayout> {
@@ -159,7 +166,11 @@ impl RxLogTab {
     /// recorded before the pause
     fn newest_first<'a>(&self, app: &'a App) -> impl Iterator<Item = &'a RxPacket> {
         let shown = self.paused.unwrap_or(u64::MAX);
-        app.rx_log.packets.iter().rev().skip_while(move |p| p.id >= shown)
+        app.rx_log
+            .packets
+            .iter()
+            .rev()
+            .skip_while(move |p| p.id >= shown)
     }
 
     /// The packets recorded since the pause began
@@ -204,16 +215,33 @@ fn packet_row(packet: &RxPacket, theme: &Theme) -> Row<'static> {
     let header = packet.log.header.as_ref();
     let (snr, rssi, len) = (packet.log.snr, packet.log.rssi, packet.len());
     // Hops and the bytes of each hop's hash: 3×1
-    let hops = header.map_or(UNKNOWN.to_string(), |h| format!("{}×{}", h.path_len, h.path_hash_size));
+    let hops = header.map_or(UNKNOWN.to_string(), |h| {
+        format!("{}×{}", h.path_len, h.path_hash_size)
+    });
     let hops_colour = header.map_or(theme.text, |h| hash_size_colour(h.path_hash_size, theme));
     Row::new([
         Cell::from(packet.timestamp.clone()),
-        Cell::from(quality_span(format!("{:>6.2}", snr), snr_quality(snr), theme)),
-        Cell::from(quality_span(format!("{:>4}", rssi), rssi_quality(rssi), theme)),
+        Cell::from(quality_span(
+            format!("{:>6.2}", snr),
+            snr_quality(snr),
+            theme,
+        )),
+        Cell::from(quality_span(
+            format!("{:>4}", rssi),
+            rssi_quality(rssi),
+            theme,
+        )),
         Cell::from(header.map_or(UNKNOWN, |h| payload_type_label(h.payload_type))),
         Cell::from(header.map_or(UNKNOWN, |h| route_label(h.route_type))),
-        Cell::from(Span::styled(format!("{:>4}", hops), Style::default().fg(hops_colour))),
-        Cell::from(quality_span(format!("{:>4}", len), length_quality(len), theme)),
+        Cell::from(Span::styled(
+            format!("{:>4}", hops),
+            Style::default().fg(hops_colour),
+        )),
+        Cell::from(quality_span(
+            format!("{:>4}", len),
+            length_quality(len),
+            theme,
+        )),
         Cell::from(summary(packet)),
     ])
 }
@@ -227,32 +255,62 @@ fn draw_rx_log_tab(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area
     let layout = PacketLayout::of(&packet.log);
     // Following the newest packet selects no field, since the fields change with each packet
     let browsing = tab.browsed_packet(app).is_some();
-    let selected = layout.as_ref().filter(|_| browsing).and_then(|l| l.fields.get(tab.field));
+    let selected = layout
+        .as_ref()
+        .filter(|_| browsing)
+        .and_then(|l| l.fields.get(tab.field));
     // Borders and the header row around the fields, or the one line saying they can't be shown
     let fields_height = layout.as_ref().map_or(1, |l| l.fields.len() as u16 + 1) + 2;
     let hex_height = layout
         .as_ref()
         .map(|l| l.bytes.len().div_ceil(HEX_ROW_BYTES) as u16 + 2)
         .filter(|&height| area.height >= PACKETS_MIN + fields_height + height);
-    let mut constraints = vec![Constraint::Min(PACKETS_MIN), Constraint::Length(fields_height)];
+    let mut constraints = vec![
+        Constraint::Min(PACKETS_MIN),
+        Constraint::Length(fields_height),
+    ];
     constraints.extend(hex_height.map(Constraint::Length));
-    let chunks = Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
     draw_packets(f, app, tab, theme, chunks[0]);
-    let title = if browsing { " Fields " } else { " Fields · newest " };
-    draw_fields(f, layout.as_ref(), browsing.then_some(tab.field), title, tab, theme, chunks[1]);
+    let title = if browsing {
+        " Fields "
+    } else {
+        " Fields · newest "
+    };
+    draw_fields(
+        f,
+        layout.as_ref(),
+        browsing.then_some(tab.field),
+        title,
+        tab,
+        theme,
+        chunks[1],
+    );
     if let (Some(layout), Some(_)) = (&layout, hex_height) {
         draw_hex(f, layout, selected, theme, chunks[2]);
     }
 }
 
 fn draw_packets(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: Rect) {
-    let rows: Vec<Row> = tab.newest_first(app).map(|packet| packet_row(packet, theme)).collect();
+    let rows: Vec<Row> = tab
+        .newest_first(app)
+        .map(|packet| packet_row(packet, theme))
+        .collect();
     let title = match tab.arrived_while_paused(app) {
         Some(arrived) => format!(" Packets ({}) · paused, {} new ", rows.len(), arrived),
         None => format!(" Packets ({}) ", rows.len()),
     };
-    let header = Row::new(["Time", "   SNR", "RSSI", "Type", "Route", "Hops", " Len", "Summary"])
-        .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
+    let header = Row::new([
+        "Time", "   SNR", "RSSI", "Type", "Route", "Hops", " Len", "Summary",
+    ])
+    .style(
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    );
     let widths = [
         Constraint::Length(8),
         Constraint::Length(6),
@@ -267,20 +325,32 @@ fn draw_packets(f: &mut Frame, app: &App, tab: &RxLogTab, theme: &Theme, area: R
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
-        .block(panel(theme, title, focus_border(tab, Section::Packets, theme.packets_border, theme)));
+        .block(panel(
+            theme,
+            title,
+            focus_border(tab, Section::Packets, theme.packets_border, theme),
+        ));
     let mut state = tab.table.borrow_mut();
     state.select(tab.browsed_row(app));
     f.render_stateful_widget(table, area, &mut state);
 }
 
 fn focus_border(tab: &RxLogTab, section: Section, unfocused: Color, theme: &Theme) -> Color {
-    if tab.focus == section { theme.focus } else { unfocused }
+    if tab.focus == section {
+        theme.focus
+    } else {
+        unfocused
+    }
 }
 
 /// A field's first bytes in hex, with "…" when there are more
 fn bytes_preview(bytes: &[u8]) -> String {
     const SHOWN: usize = 3;
-    let mut preview: Vec<String> = bytes.iter().take(SHOWN).map(|b| format!("{:02X}", b)).collect();
+    let mut preview: Vec<String> = bytes
+        .iter()
+        .take(SHOWN)
+        .map(|b| format!("{:02X}", b))
+        .collect();
     if bytes.len() > SHOWN {
         preview.push("…".to_string());
     }
@@ -296,10 +366,19 @@ fn draw_fields(
     theme: &Theme,
     area: Rect,
 ) {
-    let block = panel(theme, title, focus_border(tab, Section::Fields, theme.radio_border, theme));
+    let block = panel(
+        theme,
+        title,
+        focus_border(tab, Section::Fields, theme.radio_border, theme),
+    );
     let Some(layout) = layout else {
         let text = "Can't show its bytes: no packet, or a payload type meshcore-rs doesn't know";
-        f.render_widget(Paragraph::new(text).style(Style::default().fg(theme.muted)).block(block), area);
+        f.render_widget(
+            Paragraph::new(text)
+                .style(Style::default().fg(theme.muted))
+                .block(block),
+            area,
+        );
         return;
     };
     let rows: Vec<Row> = layout
@@ -314,51 +393,102 @@ fn draw_fields(
             ])
         })
         .collect();
-    let header = Row::new([" Off", "Bytes", "Field", "Value"])
-        .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
-    let widths = [Constraint::Length(4), Constraint::Length(12), Constraint::Length(14), Constraint::Fill(1)];
+    let header = Row::new([" Off", "Bytes", "Field", "Value"]).style(
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    );
+    let widths = [
+        Constraint::Length(4),
+        Constraint::Length(12),
+        Constraint::Length(14),
+        Constraint::Fill(1),
+    ];
     let table = Table::new(rows, widths)
         .header(header)
         .style(Style::default().fg(theme.text))
-        .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg_alt))
+        .row_highlight_style(
+            Style::default()
+                .fg(theme.selected_fg)
+                .bg(theme.selected_bg_alt),
+        )
         .block(block);
-    f.render_stateful_widget(table, area, &mut TableState::default().with_selected(selected));
+    f.render_stateful_widget(
+        table,
+        area,
+        &mut TableState::default().with_selected(selected),
+    );
 }
 
 /// The packet in hex and ASCII, 16 bytes a row, with the selected field's bytes highlighted
-fn draw_hex(f: &mut Frame, layout: &PacketLayout, field: Option<&Field>, theme: &Theme, area: Rect) {
-    let highlight = Style::default().fg(theme.selected_fg).bg(theme.selected_bg_alt);
+fn draw_hex(
+    f: &mut Frame,
+    layout: &PacketLayout,
+    field: Option<&Field>,
+    theme: &Theme,
+    area: Rect,
+) {
+    let highlight = Style::default()
+        .fg(theme.selected_fg)
+        .bg(theme.selected_bg_alt);
     let selected = field.map_or(0..0, |field| field.offset..field.offset + field.len);
-    let style = |at: usize| if selected.contains(&at) { highlight } else { Style::default().fg(theme.text) };
+    let style = |at: usize| {
+        if selected.contains(&at) {
+            highlight
+        } else {
+            Style::default().fg(theme.text)
+        }
+    };
     let lines: Vec<Line> = layout
         .bytes
         .chunks(HEX_ROW_BYTES)
         .enumerate()
         .map(|(row, chunk)| {
             let start = row * HEX_ROW_BYTES;
-            let mut spans = vec![Span::styled(format!("{:04x}  ", start), Style::default().fg(theme.muted))];
+            let mut spans = vec![Span::styled(
+                format!("{:04x}  ", start),
+                Style::default().fg(theme.muted),
+            )];
             for (i, byte) in chunk.iter().enumerate() {
                 let at = start + i;
                 if i > 0 {
                     // An extra space splits the row in halves; a gap inside the field is highlighted with it
                     let gap = if i == HEX_ROW_BYTES / 2 { "  " } else { " " };
                     let in_field = selected.contains(&(at - 1)) && selected.contains(&at);
-                    spans.push(Span::styled(gap, if in_field { highlight } else { Style::default() }));
+                    spans.push(Span::styled(
+                        gap,
+                        if in_field {
+                            highlight
+                        } else {
+                            Style::default()
+                        },
+                    ));
                 }
                 spans.push(Span::styled(format!("{:02X}", byte), style(at)));
             }
             // Line a short last row's ASCII up with the rows above
             let missing = HEX_ROW_BYTES - chunk.len();
-            let split = if chunk.len() <= HEX_ROW_BYTES / 2 { 1 } else { 0 };
+            let split = if chunk.len() <= HEX_ROW_BYTES / 2 {
+                1
+            } else {
+                0
+            };
             spans.push(Span::raw(" ".repeat(missing * 3 + split + 2)));
             for (i, byte) in chunk.iter().enumerate() {
-                let c = if byte.is_ascii_graphic() || *byte == b' ' { *byte as char } else { '.' };
+                let c = if byte.is_ascii_graphic() || *byte == b' ' {
+                    *byte as char
+                } else {
+                    '.'
+                };
                 spans.push(Span::styled(c.to_string(), style(start + i)));
             }
             Line::from(spans)
         })
         .collect();
-    f.render_widget(Paragraph::new(lines).block(panel(theme, " Hex ", theme.radio_border)), area);
+    f.render_widget(
+        Paragraph::new(lines).block(panel(theme, " Hex ", theme.radio_border)),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -371,12 +501,19 @@ mod tests {
 
     fn render(app: &App, tab: &RxLogTab, width: u16, height: u16) -> TestBackend {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|f| draw_rx_log_tab(f, app, tab, &Theme::CLASSIC, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_rx_log_tab(f, app, tab, &Theme::CLASSIC, f.area()))
+            .unwrap();
         terminal.backend().clone()
     }
 
     fn screen_text(backend: &TestBackend) -> String {
-        backend.buffer().content().iter().map(|cell| cell.symbol()).collect()
+        backend
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     /// Browsing the oldest packet, the channel message, with its path field selected
@@ -394,21 +531,37 @@ mod tests {
     /// A channel message, an advert, and a push that carried no packet, oldest first
     fn app_with_packets() -> App {
         let mut app = App::new(0);
-        app.rx_log.record("12:00:01".to_string(), group_text_log(&[0xa1, 0x7f, 0x3c], 50));
-        app.rx_log.record("12:00:02".to_string(), advert_log("Hilltop 🖖"));
-        app.rx_log.record("12:00:03".to_string(), LogData { snr: 0.5, rssi: -120, ..Default::default() });
+        app.rx_log.record(
+            "12:00:01".to_string(),
+            group_text_log(&[0xa1, 0x7f, 0x3c], 50),
+        );
+        app.rx_log
+            .record("12:00:02".to_string(), advert_log("Hilltop 🖖"));
+        app.rx_log.record(
+            "12:00:03".to_string(),
+            LogData {
+                snr: 0.5,
+                rssi: -120,
+                ..Default::default()
+            },
+        );
         app
     }
 
     fn press(tab: &mut RxLogTab, app: &App, code: KeyCode) -> KeyResult {
-        tab.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), app)
+        tab.handle_key(
+            KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+            app,
+        )
     }
 
     #[test]
     fn packets_newest_first() {
         let mut terminal = Terminal::new(TestBackend::new(80, 7)).unwrap();
         let app = app_with_packets();
-        terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area()))
+            .unwrap();
         insta::assert_snapshot!(terminal.backend());
     }
 
@@ -416,14 +569,31 @@ mod tests {
     fn snr_rssi_and_length_are_coloured_by_quality() {
         let mut terminal = Terminal::new(TestBackend::new(80, 7)).unwrap();
         let app = app_with_packets();
-        terminal.draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_packets(f, &app, &RxLogTab::default(), &Theme::CLASSIC, f.area()))
+            .unwrap();
         let buffer = terminal.backend().buffer();
         let theme = Theme::CLASSIC;
         // Rows 2-4 are the packets newest first; SNR ends at column 15, RSSI at 20 and length at 49
         for (y, snr, rssi, len) in [(3, -2.75, -112, 117), (4, 9.25, -28, 55)] {
-            assert_eq!(buffer[(15, y)].fg, theme.quality(snr_quality(snr)), "SNR on row {}", y);
-            assert_eq!(buffer[(20, y)].fg, theme.quality(rssi_quality(rssi)), "RSSI on row {}", y);
-            assert_eq!(buffer[(49, y)].fg, theme.quality(length_quality(len)), "length on row {}", y);
+            assert_eq!(
+                buffer[(15, y)].fg,
+                theme.quality(snr_quality(snr)),
+                "SNR on row {}",
+                y
+            );
+            assert_eq!(
+                buffer[(20, y)].fg,
+                theme.quality(rssi_quality(rssi)),
+                "RSSI on row {}",
+                y
+            );
+            assert_eq!(
+                buffer[(49, y)].fg,
+                theme.quality(length_quality(len)),
+                "length on row {}",
+                y
+            );
         }
         assert_ne!(buffer[(15, 3)].fg, buffer[(15, 4)].fg);
     }
@@ -431,32 +601,48 @@ mod tests {
     #[test]
     fn each_hop_hash_size_has_its_own_colour() {
         let theme = Theme::CLASSIC;
-        let colours: Vec<Color> = (1..=4).map(|bytes| hash_size_colour(bytes, &theme)).collect();
+        let colours: Vec<Color> = (1..=4)
+            .map(|bytes| hash_size_colour(bytes, &theme))
+            .collect();
         assert_eq!(colours, [theme.text, theme.info, theme.value, theme.bad]);
-        assert!(colours[..3].iter().enumerate().all(|(i, c)| !colours[..i].contains(c)));
+        assert!(colours[..3]
+            .iter()
+            .enumerate()
+            .all(|(i, c)| !colours[..i].contains(c)));
     }
 
     #[test]
     fn fields_follow_the_newest_packet_until_one_is_browsed() {
         let (tab, mut app) = (RxLogTab::default(), app_with_packets());
-        app.rx_log.record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
+        app.rx_log
+            .record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
         let backend = render(&app, &tab, 80, 24);
         let text = screen_text(&backend);
         assert!(text.contains(" Fields · newest "));
         assert!(text.contains("channel hash"));
         // Nothing is selected while following: no packet row, field or bytes
-        assert!(backend.buffer().content().iter().all(|cell| cell.bg != Theme::CLASSIC.selected_bg));
-        app.rx_log.record("12:00:05".to_string(), advert_log("Hilltop"));
+        assert!(backend
+            .buffer()
+            .content()
+            .iter()
+            .all(|cell| cell.bg != Theme::CLASSIC.selected_bg));
+        app.rx_log
+            .record("12:00:05".to_string(), advert_log("Hilltop"));
         assert!(screen_text(&render(&app, &tab, 80, 24)).contains("public key"));
     }
 
     #[test]
     fn pause_freezes_the_packets_and_counts_the_new_ones() {
         let (mut tab, mut app) = (RxLogTab::default(), app_with_packets());
-        assert_eq!(press(&mut tab, &app, KeyCode::Char('p')), KeyResult::Handled);
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Char('p')),
+            KeyResult::Handled
+        );
         assert_eq!(tab.key_hints().last(), Some(&"p=resume"));
-        app.rx_log.record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
-        app.rx_log.record("12:00:05".to_string(), advert_log("Hilltop"));
+        app.rx_log
+            .record("12:00:04".to_string(), group_text_log(&[0xa1], 20));
+        app.rx_log
+            .record("12:00:05".to_string(), advert_log("Hilltop"));
         let text = screen_text(&render(&app, &tab, 80, 24));
         assert!(text.contains(" Packets (3) · paused, 2 new "));
         // The fields still follow the newest packet from before the pause
@@ -484,7 +670,10 @@ mod tests {
         for _ in 0..crate::rx_log::RX_LOG_LEN + 3 {
             app.rx_log.record(String::new(), LogData::default());
         }
-        assert_eq!(tab.arrived_while_paused(&app), Some(crate::rx_log::RX_LOG_LEN as u64 + 3));
+        assert_eq!(
+            tab.arrived_while_paused(&app),
+            Some(crate::rx_log::RX_LOG_LEN as u64 + 3)
+        );
         assert_eq!(tab.newest_first(&app).count(), 0);
     }
 
@@ -493,14 +682,20 @@ mod tests {
         let (mut tab, app) = (RxLogTab::default(), app_with_packets());
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Down);
-        assert_eq!(tab.key_hints(), ["↑↓=browse", "Home=newest", "Tab=panel", "p=pause"]);
+        assert_eq!(
+            tab.key_hints(),
+            ["↑↓=browse", "Home=newest", "Tab=panel", "p=pause"]
+        );
         assert_eq!(press(&mut tab, &app, KeyCode::Home), KeyResult::Handled);
         assert_eq!(tab.browsed, None);
         assert_eq!(tab.key_hints(), ["↓=browse", "Tab=panel", "p=pause"]);
         // From the fields too, which hand focus back to the packets
         let mut tab = tab_on_channel_message_path(&app);
         press(&mut tab, &app, KeyCode::Home);
-        assert_eq!((tab.browsed, &tab.focus, tab.field), (None, &Section::Packets, 0));
+        assert_eq!(
+            (tab.browsed, &tab.focus, tab.field),
+            (None, &Section::Packets, 0)
+        );
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Up);
         assert_eq!(tab.browsed, None);
@@ -529,17 +724,29 @@ mod tests {
         let theme = Theme::VAPORWAVE;
         let tab = tab_on_channel_message_path(&app);
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|f| draw_rx_log_tab(f, &app, &tab, &theme, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_rx_log_tab(f, &app, &tab, &theme, f.area()))
+            .unwrap();
         let buffer = terminal.backend().buffer();
-        let row = (0..24).find(|&y| buffer[(1, y)].symbol() == "0" && buffer[(2, y)].symbol() == "0").unwrap();
+        let row = (0..24)
+            .find(|&y| buffer[(1, y)].symbol() == "0" && buffer[(2, y)].symbol() == "0")
+            .unwrap();
         // Bytes 2-4 of the first row are the path: border, "0000  ", then 3 columns a byte
         let byte_x = |byte: u16| 1 + 6 + byte * 3;
         let bg = |x: u16| buffer[(x, row)].bg;
         assert_eq!(buffer[(byte_x(2), row)].symbol(), "A");
         assert_eq!(bg(byte_x(2)), theme.selected_bg_alt);
-        assert_eq!(bg(byte_x(3) - 1), theme.selected_bg_alt, "gap inside the field");
+        assert_eq!(
+            bg(byte_x(3) - 1),
+            theme.selected_bg_alt,
+            "gap inside the field"
+        );
         assert_eq!(bg(byte_x(4) + 1), theme.selected_bg_alt);
-        assert_ne!(bg(byte_x(2) - 1), theme.selected_bg_alt, "gap before the field");
+        assert_ne!(
+            bg(byte_x(2) - 1),
+            theme.selected_bg_alt,
+            "gap before the field"
+        );
         assert_ne!(bg(byte_x(5)), theme.selected_bg_alt);
         // The browsed packet, the oldest of the three, keeps the usual selection colour
         assert_eq!(buffer[(1, 4)].bg, theme.selected_bg);
@@ -573,7 +780,10 @@ mod tests {
         assert_eq!(press(&mut tab, &app, KeyCode::Tab), KeyResult::Handled);
         // The newest, which the fields were following
         assert_eq!(tab.browsed, Some(2));
-        assert_eq!(tab.key_hints(), ["↑↓=field", "Home=newest", "Tab=panel", "p=pause"]);
+        assert_eq!(
+            tab.key_hints(),
+            ["↑↓=field", "Home=newest", "Tab=panel", "p=pause"]
+        );
         press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.focus, Section::Packets);
         // A browsed packet keeps its selected field through Tab and back
@@ -642,7 +852,8 @@ mod tests {
         let (mut tab, mut app) = (RxLogTab::default(), app_with_packets());
         press(&mut tab, &app, KeyCode::Down);
         assert_eq!(tab.browsed_row(&app), Some(0));
-        app.rx_log.record("12:00:04".to_string(), LogData::default());
+        app.rx_log
+            .record("12:00:04".to_string(), LogData::default());
         assert_eq!(tab.browsed_row(&app), Some(1));
         press(&mut tab, &app, KeyCode::Up);
         assert_eq!(tab.browsed, Some(3));
@@ -651,7 +862,10 @@ mod tests {
     #[test]
     fn summary_names_adverts_and_channel_hashes() {
         let app = app_with_packets();
-        let summaries: Vec<String> = RxLogTab::default().newest_first(&app).map(summary).collect();
+        let summaries: Vec<String> = RxLogTab::default()
+            .newest_first(&app)
+            .map(summary)
+            .collect();
         assert_eq!(summaries, ["", "Hilltop 🖖", "ch/0xd9 MAC/0x5a5a"]);
     }
 }

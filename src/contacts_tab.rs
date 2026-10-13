@@ -60,9 +60,12 @@ impl View for ContactsTab {
                     None => KeyResult::Ignored,
                 };
             }
-            (KeyCode::Up, Section::Adverts) => self.adverts_scroll = self.adverts_scroll.saturating_sub(1),
+            (KeyCode::Up, Section::Adverts) => {
+                self.adverts_scroll = self.adverts_scroll.saturating_sub(1)
+            }
             (KeyCode::Down, Section::Adverts) => {
-                self.adverts_scroll = (self.adverts_scroll + 1).min(app.adverts.len().saturating_sub(1));
+                self.adverts_scroll =
+                    (self.adverts_scroll + 1).min(app.adverts.len().saturating_sub(1));
             }
             _ => return KeyResult::Ignored,
         }
@@ -148,7 +151,14 @@ fn position_label(contact: &Contact) -> String {
     }
 }
 
-fn draw_contacts_tab(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme, now: i64, area: Rect) {
+fn draw_contacts_tab(
+    f: &mut Frame,
+    app: &App,
+    tab: &ContactsTab,
+    theme: &Theme,
+    now: i64,
+    area: Rect,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(6), Constraint::Length(10)])
@@ -157,7 +167,14 @@ fn draw_contacts_tab(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme,
     draw_adverts(f, &app.adverts, tab, theme, chunks[1]);
 }
 
-fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme, now: i64, area: Rect) {
+fn draw_contact_table(
+    f: &mut Frame,
+    app: &App,
+    tab: &ContactsTab,
+    theme: &Theme,
+    now: i64,
+    area: Rect,
+) {
     let rows: Vec<Row> = by_newest_advert(app)
         .into_iter()
         .map(|c| {
@@ -171,8 +188,11 @@ fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme
             ])
         })
         .collect();
-    let header = Row::new(["Name", "Type", "Key", "Last advert", "Hops", "Position"])
-        .style(Style::default().fg(theme.muted).add_modifier(Modifier::BOLD));
+    let header = Row::new(["Name", "Type", "Key", "Last advert", "Hops", "Position"]).style(
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    );
     let widths = [
         Constraint::Fill(1),
         Constraint::Length(9),
@@ -181,17 +201,31 @@ fn draw_contact_table(f: &mut Frame, app: &App, tab: &ContactsTab, theme: &Theme
         Constraint::Length(5),
         Constraint::Length(19),
     ];
-    let border = if tab.focus == Section::Table { theme.focus } else { theme.contacts_border };
+    let border = if tab.focus == Section::Table {
+        theme.focus
+    } else {
+        theme.contacts_border
+    };
     let table = Table::new(rows, widths)
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
-        .block(panel(theme, format!(" Contacts ({}) ", app.contacts.len()), border));
+        .block(panel(
+            theme,
+            format!(" Contacts ({}) ", app.contacts.len()),
+            border,
+        ));
     f.render_stateful_widget(table, area, &mut tab.table.borrow_mut());
 }
 
 /// Adverts, newest first from the scroll position; a new contact's shows what it added
-fn draw_adverts(f: &mut Frame, adverts: &[AdvertEntry], tab: &ContactsTab, theme: &Theme, area: Rect) {
+fn draw_adverts(
+    f: &mut Frame,
+    adverts: &[AdvertEntry],
+    tab: &ContactsTab,
+    theme: &Theme,
+    area: Rect,
+) {
     let visible = (area.height as usize).saturating_sub(2);
     let items: Vec<ListItem> = adverts
         .iter()
@@ -214,15 +248,27 @@ fn draw_adverts(f: &mut Frame, adverts: &[AdvertEntry], tab: &ContactsTab, theme
             ListItem::new(Line::from(vec![
                 Span::styled(&a.timestamp, Style::default().fg(theme.muted)),
                 Span::raw(" "),
-                Span::styled(kind, Style::default().fg(theme.packet_advert).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    kind,
+                    Style::default()
+                        .fg(theme.packet_advert)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(&a.name, Style::default().fg(theme.text)),
                 Span::styled(detail, Style::default().fg(theme.muted)),
             ]))
         })
         .collect();
-    let border = if tab.focus == Section::Adverts { theme.focus } else { theme.packets_border };
-    f.render_widget(List::new(items).block(panel(theme, " Adverts ", border)), area);
+    let border = if tab.focus == Section::Adverts {
+        theme.focus
+    } else {
+        theme.packets_border
+    };
+    f.render_widget(
+        List::new(items).block(panel(theme, " Adverts ", border)),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -259,7 +305,9 @@ mod tests {
         let mut alice_key = [0; 32];
         alice_key[..6].copy_from_slice(&[0xa1; 6]);
         app.apply_radio_event(EventPayload::Contact(contact("Bob", [0xd4; 6])));
-        app.apply_radio_event(EventPayload::Advertisement(AdvertisementData { public_key: alice_key }));
+        app.apply_radio_event(EventPayload::Advertisement(AdvertisementData {
+            public_key: alice_key,
+        }));
         for advert in &mut app.adverts {
             advert.timestamp = "12:34:56".to_string();
         }
@@ -268,11 +316,19 @@ mod tests {
 
     #[test]
     fn contacts_and_adverts_newest_first() {
-        insta::assert_snapshot!(render(&app_with_heard_contacts(), &ContactsTab::default(), 80, 16));
+        insta::assert_snapshot!(render(
+            &app_with_heard_contacts(),
+            &ContactsTab::default(),
+            80,
+            16
+        ));
     }
 
     fn press(tab: &mut ContactsTab, app: &App, code: KeyCode) -> KeyResult {
-        tab.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), app)
+        tab.handle_key(
+            KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+            app,
+        )
     }
 
     fn browsed_name(tab: &ContactsTab, app: &App) -> Option<String> {
@@ -310,7 +366,11 @@ mod tests {
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Down);
-        let hilltop = app.contacts.iter().find(|c| c.adv_name == "Hilltop").unwrap();
+        let hilltop = app
+            .contacts
+            .iter()
+            .find(|c| c.adv_name == "Hilltop")
+            .unwrap();
         assert_eq!(
             press(&mut tab, &app, KeyCode::Enter),
             KeyResult::Action(Action::MessageContact(hilltop.public_key))
@@ -349,7 +409,10 @@ mod tests {
     #[test]
     fn contact_types_follow_the_firmware() {
         let labels: Vec<&str> = (0..=5).map(contact_type_label).collect();
-        assert_eq!(labels, ["?", "Companion", "Repeater", "Room", "Sensor", "?"]);
+        assert_eq!(
+            labels,
+            ["?", "Companion", "Repeater", "Room", "Sensor", "?"]
+        );
     }
 
     #[test]

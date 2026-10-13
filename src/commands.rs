@@ -44,31 +44,96 @@ impl CommandSpec {
 }
 
 const COMMANDS: &[CommandSpec] = &[
-    CommandSpec { name: "/help", aliases: &["/h"], args: "", description: "list commands" },
-    CommandSpec { name: "/contacts", aliases: &["/c"], args: "", description: "reload contacts" },
+    CommandSpec {
+        name: "/help",
+        aliases: &["/h"],
+        args: "",
+        description: "list commands",
+    },
+    CommandSpec {
+        name: "/contacts",
+        aliases: &["/c"],
+        args: "",
+        description: "reload contacts",
+    },
     CommandSpec {
         name: "/contact-add",
         aliases: &[],
         args: "<name> <pubkey> | <meshcore://contact/add link> | <meshcore:// card>",
         description: "add a contact",
     },
-    CommandSpec { name: "/contact-del", aliases: &[], args: "<name> | <pubkey>", description: "delete a contact" },
-    CommandSpec { name: "/to", aliases: &[], args: "<contact_name>", description: "DM a contact" },
-    CommandSpec { name: "/ch", aliases: &["/channel"], args: "<idx>", description: "switch channel" },
-    CommandSpec { name: "/public", aliases: &[], args: "", description: "switch to public channel (CH#0)" },
-    CommandSpec { name: "/channels", aliases: &["/chs"], args: "", description: "list channels" },
+    CommandSpec {
+        name: "/contact-del",
+        aliases: &[],
+        args: "<name> | <pubkey>",
+        description: "delete a contact",
+    },
+    CommandSpec {
+        name: "/to",
+        aliases: &[],
+        args: "<contact_name>",
+        description: "DM a contact",
+    },
+    CommandSpec {
+        name: "/ch",
+        aliases: &["/channel"],
+        args: "<idx>",
+        description: "switch channel",
+    },
+    CommandSpec {
+        name: "/public",
+        aliases: &[],
+        args: "",
+        description: "switch to public channel (CH#0)",
+    },
+    CommandSpec {
+        name: "/channels",
+        aliases: &["/chs"],
+        args: "",
+        description: "list channels",
+    },
     CommandSpec {
         name: "/setch",
         aliases: &["/setchannel"],
         args: "<idx> <name> [hex_secret_32chars]",
         description: "create channel (random secret if omitted)",
     },
-    CommandSpec { name: "/getch", aliases: &["/getchannel"], args: "<idx>", description: "show channel info" },
-    CommandSpec { name: "/advert", aliases: &[], args: "", description: "send advert" },
-    CommandSpec { name: "/bat", aliases: &[], args: "", description: "battery and storage" },
-    CommandSpec { name: "/name", aliases: &[], args: "<new_name>", description: "rename device" },
-    CommandSpec { name: "/info", aliases: &["/i"], args: "", description: "device info" },
-    CommandSpec { name: "/quit", aliases: &["/q"], args: "", description: "quit" },
+    CommandSpec {
+        name: "/getch",
+        aliases: &["/getchannel"],
+        args: "<idx>",
+        description: "show channel info",
+    },
+    CommandSpec {
+        name: "/advert",
+        aliases: &[],
+        args: "",
+        description: "send advert",
+    },
+    CommandSpec {
+        name: "/bat",
+        aliases: &[],
+        args: "",
+        description: "battery and storage",
+    },
+    CommandSpec {
+        name: "/name",
+        aliases: &[],
+        args: "<new_name>",
+        description: "rename device",
+    },
+    CommandSpec {
+        name: "/info",
+        aliases: &["/i"],
+        args: "",
+        description: "device info",
+    },
+    CommandSpec {
+        name: "/quit",
+        aliases: &["/q"],
+        args: "",
+        description: "quit",
+    },
 ];
 
 fn find_command(name: &str) -> Option<&'static CommandSpec> {
@@ -160,7 +225,11 @@ fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     if name.is_empty() {
         return Err(spec.usage());
     }
-    Ok(Command::AddContact { name: name.to_string(), public_key: parse_public_key(key)?, contact_type: COMPANION })
+    Ok(Command::AddContact {
+        name: name.to_string(),
+        public_key: parse_public_key(key)?,
+        contact_type: COMPANION,
+    })
 }
 
 /// A contact link's query: name, public_key and an optional numeric type
@@ -168,16 +237,25 @@ fn parse_contact_link(query: &str) -> Result<Command, String> {
     let (mut name, mut key, mut contact_type) = (None, None, COMPANION);
     for pair in query.split('&') {
         let (field, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = url_decode(value).ok_or_else(|| format!("Contact link has a badly escaped {}", field))?;
+        let value = url_decode(value)
+            .ok_or_else(|| format!("Contact link has a badly escaped {}", field))?;
         match field {
             "name" => name = Some(value),
             "public_key" => key = Some(parse_public_key(&value)?),
-            "type" => contact_type = value.parse().map_err(|_| "Contact link type must be a number".to_string())?,
+            "type" => {
+                contact_type = value
+                    .parse()
+                    .map_err(|_| "Contact link type must be a number".to_string())?
+            }
             _ => {}
         }
     }
     match (name, key) {
-        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact { name, public_key, contact_type }),
+        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact {
+            name,
+            public_key,
+            contact_type,
+        }),
         _ => Err("Contact link needs a name and public_key".to_string()),
     }
 }
@@ -244,7 +322,11 @@ impl App {
                         .map(|idx| {
                             let ch = &self.channels[&idx];
                             let secret_hex = meshcore_rs::parsing::hex_encode(&ch.secret);
-                            let active = if idx == self.active_channel { " \u{25c0}" } else { "" };
+                            let active = if idx == self.active_channel {
+                                " \u{25c0}"
+                            } else {
+                                ""
+                            };
                             format!("  #{}: {} [{}]{}", idx, ch.name, secret_hex, active)
                         })
                         .collect();
@@ -291,7 +373,9 @@ impl App {
             }
             Command::Quit => self.should_quit = true,
             // Adding a key that's already a contact would overwrite its name and type and reset its route
-            Command::AddContact { public_key, .. } if self.contacts.iter().any(|c| c.public_key == public_key) => {
+            Command::AddContact { public_key, .. }
+                if self.contacts.iter().any(|c| c.public_key == public_key) =>
+            {
                 let existing = self.contacts.iter().find(|c| c.public_key == public_key);
                 let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
                 self.err(&format!("That key is already a contact: {}", name));
@@ -325,14 +409,23 @@ impl App {
         let named = |c: &&Contact| sanitize(&c.adv_name).to_lowercase() == needle;
         let mut matches: Vec<&Contact> = self.contacts.iter().filter(named).collect();
         if matches.is_empty() {
-            matches = self.contacts.iter().filter(|c| sanitize(&c.adv_name).to_lowercase().contains(&needle)).collect();
+            matches = self
+                .contacts
+                .iter()
+                .filter(|c| sanitize(&c.adv_name).to_lowercase().contains(&needle))
+                .collect();
         }
         match matches.as_slice() {
             [contact] => Ok(contact),
             [] => Err(format!("Contact '{}' not found", target)),
             several => {
                 let names: Vec<String> = several.iter().map(|c| sanitize(&c.adv_name)).collect();
-                Err(format!("'{}' matches {} contacts: {}", target, several.len(), names.join(", ")))
+                Err(format!(
+                    "'{}' matches {} contacts: {}",
+                    target,
+                    several.len(),
+                    names.join(", ")
+                ))
             }
         }
     }
@@ -346,7 +439,12 @@ impl App {
 }
 
 /// Program a channel, generating a secret if none was given; returns the secret used
-async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]>) -> Result<[u8; 16], String> {
+async fn set_channel(
+    mc: &MeshCore,
+    idx: u8,
+    name: &str,
+    secret: Option<[u8; 16]>,
+) -> Result<[u8; 16], String> {
     let secret = secret
         .map_or_else(random_secret, Ok)
         .map_err(|e| format!("Could not generate channel secret: {}", e))?;
@@ -360,19 +458,45 @@ async fn set_channel(mc: &MeshCore, idx: u8, name: &str, secret: Option<[u8; 16]
 }
 
 /// Add a contact with no route, then reload the contact list to show it
-async fn add_contact(mc: &MeshCore, name: String, public_key: PublicKey, contact_type: u8) -> Result<Outcome, String> {
-    let contact = Contact { public_key, contact_type, adv_name: name.clone(), ..Default::default() };
+async fn add_contact(
+    mc: &MeshCore,
+    name: String,
+    public_key: PublicKey,
+    contact_type: u8,
+) -> Result<Outcome, String> {
+    let contact = Contact {
+        public_key,
+        contact_type,
+        adv_name: name.clone(),
+        ..Default::default()
+    };
     let commands = mc.commands().lock().await;
-    commands.add_contact(&contact).await.map_err(|e| format!("Add contact: {}", e))?;
-    let contacts = commands.get_contacts(0).await.map_err(|e| format!("Contacts: {}", e))?;
+    commands
+        .add_contact(&contact)
+        .await
+        .map_err(|e| format!("Add contact: {}", e))?;
+    let contacts = commands
+        .get_contacts(0)
+        .await
+        .map_err(|e| format!("Contacts: {}", e))?;
     Ok(Outcome::ContactAdded { name, contacts })
 }
 
 /// Remove a contact, then reload the contact list without it
-async fn remove_contact(mc: &MeshCore, name: String, public_key: PublicKey) -> Result<Outcome, String> {
+async fn remove_contact(
+    mc: &MeshCore,
+    name: String,
+    public_key: PublicKey,
+) -> Result<Outcome, String> {
     let commands = mc.commands().lock().await;
-    commands.remove_contact(&public_key[..]).await.map_err(|e| format!("Delete contact: {}", e))?;
-    let contacts = commands.get_contacts(0).await.map_err(|e| format!("Contacts: {}", e))?;
+    commands
+        .remove_contact(&public_key[..])
+        .await
+        .map_err(|e| format!("Delete contact: {}", e))?;
+    let contacts = commands
+        .get_contacts(0)
+        .await
+        .map_err(|e| format!("Contacts: {}", e))?;
     Ok(Outcome::ContactRemoved { name, contacts })
 }
 
@@ -421,26 +545,61 @@ pub enum Outcome {
 /// Run a command on the radio; the error is the text to show the user
 pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, String> {
     match cmd {
-        Command::Contacts => mc.commands().lock().await.get_contacts(0).await
+        Command::Contacts => mc
+            .commands()
+            .lock()
+            .await
+            .get_contacts(0)
+            .await
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
-        Command::AddContact { name, public_key, contact_type } => add_contact(mc, name, public_key, contact_type).await,
-        Command::ImportContact(card) => mc.commands().lock().await.import_contact(&card).await
+        Command::AddContact {
+            name,
+            public_key,
+            contact_type,
+        } => add_contact(mc, name, public_key, contact_type).await,
+        Command::ImportContact(card) => mc
+            .commands()
+            .lock()
+            .await
+            .import_contact(&card)
+            .await
             .map(|_| Outcome::ContactImported)
             .map_err(|e| format!("Import contact: {}", e)),
         Command::RemoveContact { name, public_key } => remove_contact(mc, name, public_key).await,
-        Command::Advert => mc.commands().lock().await.send_advert(true).await
+        Command::Advert => mc
+            .commands()
+            .lock()
+            .await
+            .send_advert(true)
+            .await
             .map(|_| Outcome::AdvertSent)
             .map_err(|e| format!("Advert: {}", e)),
-        Command::Battery => mc.commands().lock().await.get_bat().await
+        Command::Battery => mc
+            .commands()
+            .lock()
+            .await
+            .get_bat()
+            .await
             .map(Outcome::Battery)
             .map_err(|e| format!("Battery: {}", e)),
-        Command::Name(name) => mc.commands().lock().await.set_name(&name).await
+        Command::Name(name) => mc
+            .commands()
+            .lock()
+            .await
+            .set_name(&name)
+            .await
             .map(|_| Outcome::NameSet(name))
             .map_err(|e| format!("Set name: {}", e)),
-        Command::SetChannel { idx, name, secret } => set_channel(mc, idx, &name, secret).await
+        Command::SetChannel { idx, name, secret } => set_channel(mc, idx, &name, secret)
+            .await
             .map(|secret| Outcome::ChannelSet { idx, name, secret }),
-        Command::GetChannel(idx) => mc.commands().lock().await.get_channel(idx).await
+        Command::GetChannel(idx) => mc
+            .commands()
+            .lock()
+            .await
+            .get_channel(idx)
+            .await
             .map(|info| Outcome::ChannelInfo { idx, info })
             .map_err(|e| format!("Get channel: {}", e)),
         // apply_local handles every command that doesn't need the radio
@@ -476,7 +635,11 @@ impl App {
                     (Some(used), Some(total)) => format!("{}/{} KB", used, total),
                     _ => "N/A".to_string(),
                 };
-                self.sys(&format!("Battery: {:.3}V  Storage: {}", b.battery_mv as f64 / 1000.0, storage));
+                self.sys(&format!(
+                    "Battery: {:.3}V  Storage: {}",
+                    b.battery_mv as f64 / 1000.0,
+                    storage
+                ));
             }
             Outcome::NameSet(name) => self.sys(&format!("Name set to: {}", name)),
             Outcome::ChannelSet { idx, name, secret } => {
@@ -495,7 +658,11 @@ impl App {
                     idx, info.channel_idx, name, secret_hex
                 ));
             }
-            Outcome::DirectSent { contact, text, info } => self.on_direct_sent(&contact, &text, &info),
+            Outcome::DirectSent {
+                contact,
+                text,
+                info,
+            } => self.on_direct_sent(&contact, &text, &info),
             Outcome::ChannelSent { channel, text } => self.on_channel_sent(channel, &text),
             Outcome::RadioStats(result) => match self.radio_stats.record(result) {
                 Some(PollNotice::Failed(e)) => self.err(&format!("Radio stats unavailable: {}", e)),
@@ -503,7 +670,9 @@ impl App {
                 None => {}
             },
             Outcome::Diagnostics(reading) => match self.diagnostics.record(reading) {
-                Some(PollNotice::Failed(e)) => self.err(&format!("Radio diagnostics unavailable: {}", e)),
+                Some(PollNotice::Failed(e)) => {
+                    self.err(&format!("Radio diagnostics unavailable: {}", e))
+                }
                 Some(PollNotice::Recovered) => self.sys("Radio diagnostics available again"),
                 None => {}
             },
@@ -524,7 +693,10 @@ impl App {
             };
             Effect::Radio(self.apply_local(cmd)?)
         } else {
-            Effect::Send { to: self.recipient(), text: line.to_string() }
+            Effect::Send {
+                to: self.recipient(),
+                text: line.to_string(),
+            }
         };
         if !self.connected {
             self.err("Not connected");
@@ -545,8 +717,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::*;
     use crate::app::{MsgType, PacketKind};
+    use crate::test_support::*;
     use meshcore_rs::events::SelfInfo;
 
     // ── Slash commands ───────────────────────────────────────────────────────
@@ -554,7 +726,11 @@ mod tests {
     #[test]
     fn random_secret_is_not_a_repeated_byte() {
         let secret = random_secret().unwrap();
-        assert!(secret.iter().any(|b| *b != secret[0]), "secret {:02x?} is one repeated byte", secret);
+        assert!(
+            secret.iter().any(|b| *b != secret[0]),
+            "secret {:02x?} is one repeated byte",
+            secret
+        );
     }
 
     #[test]
@@ -603,19 +779,34 @@ mod tests {
 
     #[test]
     fn parse_unknown_command() {
-        assert_eq!(parse_command("/Nope x"), Err("Unknown command: /nope".to_string()));
+        assert_eq!(
+            parse_command("/Nope x"),
+            Err("Unknown command: /nope".to_string())
+        );
     }
 
     #[test]
     fn parse_to_keeps_the_rest_of_the_line() {
-        assert_eq!(parse_command("/to Big Bob"), Ok(Command::To("Big Bob".to_string())));
-        assert_eq!(parse_command("/to"), Err("Usage: /to <contact_name>".to_string()));
+        assert_eq!(
+            parse_command("/to Big Bob"),
+            Ok(Command::To("Big Bob".to_string()))
+        );
+        assert_eq!(
+            parse_command("/to"),
+            Err("Usage: /to <contact_name>".to_string())
+        );
     }
 
     #[test]
     fn parse_name_requires_an_argument() {
-        assert_eq!(parse_command("/name Base"), Ok(Command::Name("Base".to_string())));
-        assert_eq!(parse_command("/name"), Err("Usage: /name <new_name>".to_string()));
+        assert_eq!(
+            parse_command("/name Base"),
+            Ok(Command::Name("Base".to_string()))
+        );
+        assert_eq!(
+            parse_command("/name"),
+            Err("Usage: /name <new_name>".to_string())
+        );
     }
 
     const KEY_HEX: &str = "9cd8fcf22a47333b591d96a2b848b73f457b1bb1a3ea2453a885f9e5787765b1";
@@ -625,14 +816,21 @@ mod tests {
     }
 
     fn add_contact(name: &str, contact_type: u8) -> Command {
-        Command::AddContact { name: name.to_string(), public_key: key(), contact_type }
+        Command::AddContact {
+            name: name.to_string(),
+            public_key: key(),
+            contact_type,
+        }
     }
 
     #[test]
     fn parse_contact_add_takes_the_last_word_as_the_key() {
         let usage =
             Err("Usage: /contact-add <name> <pubkey> | <meshcore://contact/add link> | <meshcore:// card>".to_string());
-        assert_eq!(parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)), Ok(add_contact("Big Bob", COMPANION)));
+        assert_eq!(
+            parse_command(&format!("/contact-add Big Bob {}", KEY_HEX)),
+            Ok(add_contact("Big Bob", COMPANION))
+        );
         assert_eq!(parse_command("/contact-add"), usage);
         assert_eq!(parse_command(&format!("/contact-add {}", KEY_HEX)), usage);
         assert_eq!(
@@ -643,17 +841,29 @@ mod tests {
 
     #[test]
     fn parse_contact_add_reads_a_contact_link() {
-        let link = format!("meshcore://contact/add?name=Example+Contact&public_key={}&type=2", KEY_HEX);
-        assert_eq!(parse_command(&format!("/contact-add {}", link)), Ok(add_contact("Example Contact", 2)));
+        let link = format!(
+            "meshcore://contact/add?name=Example+Contact&public_key={}&type=2",
+            KEY_HEX
+        );
+        assert_eq!(
+            parse_command(&format!("/contact-add {}", link)),
+            Ok(add_contact("Example Contact", 2))
+        );
         // The type is optional
         let link = format!("meshcore://contact/add?public_key={}&name=Bob", KEY_HEX);
-        assert_eq!(parse_command(&format!("/contact-add {}", link)), Ok(add_contact("Bob", COMPANION)));
+        assert_eq!(
+            parse_command(&format!("/contact-add {}", link)),
+            Ok(add_contact("Bob", COMPANION))
+        );
         assert_eq!(
             parse_command("/contact-add meshcore://contact/add?name=Bob"),
             Err("Contact link needs a name and public_key".to_string())
         );
         assert_eq!(
-            parse_command(&format!("/contact-add meshcore://contact/add?name=Bob&public_key={}&type=x", KEY_HEX)),
+            parse_command(&format!(
+                "/contact-add meshcore://contact/add?name=Bob&public_key={}&type=x",
+                KEY_HEX
+            )),
             Err("Contact link type must be a number".to_string())
         );
     }
@@ -683,14 +893,20 @@ mod tests {
     #[test]
     fn contact_add_of_a_new_key_goes_to_the_radio() {
         let mut app = App::new(0);
-        assert_eq!(app.apply_local(add_contact("Bob", COMPANION)), Some(add_contact("Bob", COMPANION)));
+        assert_eq!(
+            app.apply_local(add_contact("Bob", COMPANION)),
+            Some(add_contact("Bob", COMPANION))
+        );
     }
 
     #[test]
     fn added_contact_shows_in_the_reloaded_list() {
         let mut app = App::new(0);
         let contacts = vec![contact("Bob", [1; 6])];
-        app.apply_outcome(Ok(Outcome::ContactAdded { name: "Bob".to_string(), contacts }));
+        app.apply_outcome(Ok(Outcome::ContactAdded {
+            name: "Bob".to_string(),
+            contacts,
+        }));
         assert_eq!(last_message(&app), "Added contact Bob");
         assert_eq!(app.contacts.len(), 1);
     }
@@ -706,19 +922,31 @@ mod tests {
     }
 
     fn remove_bob() -> Option<Command> {
-        Some(Command::RemoveContact { name: "Bob".to_string(), public_key: key() })
+        Some(Command::RemoveContact {
+            name: "Bob".to_string(),
+            public_key: key(),
+        })
     }
 
     #[test]
     fn parse_contact_del_takes_the_rest_of_the_line() {
-        assert_eq!(parse_command("/contact-del Big Bob "), Ok(Command::DeleteContact("Big Bob".to_string())));
-        assert_eq!(parse_command("/contact-del"), Err("Usage: /contact-del <name> | <pubkey>".to_string()));
+        assert_eq!(
+            parse_command("/contact-del Big Bob "),
+            Ok(Command::DeleteContact("Big Bob".to_string()))
+        );
+        assert_eq!(
+            parse_command("/contact-del"),
+            Err("Usage: /contact-del <name> | <pubkey>".to_string())
+        );
     }
 
     #[test]
     fn contact_del_finds_a_contact_by_key() {
         let mut app = app_with_bob_and_bobby();
-        assert_eq!(app.apply_local(Command::DeleteContact(KEY_HEX.to_string())), remove_bob());
+        assert_eq!(
+            app.apply_local(Command::DeleteContact(KEY_HEX.to_string())),
+            remove_bob()
+        );
         let other_key = "00".repeat(32);
         assert_eq!(app.apply_local(Command::DeleteContact(other_key)), None);
         assert_eq!(last_message(&app), "No contact has that key");
@@ -727,23 +955,34 @@ mod tests {
     #[test]
     fn contact_del_prefers_a_whole_name_over_a_partial_one() {
         let mut app = app_with_bob_and_bobby();
-        assert_eq!(app.apply_local(Command::DeleteContact("BOB".to_string())), remove_bob());
+        assert_eq!(
+            app.apply_local(Command::DeleteContact("BOB".to_string())),
+            remove_bob()
+        );
     }
 
     #[test]
     fn contact_del_takes_a_partial_name_that_matches_one_contact() {
         let mut app = app_with_bob_and_bobby();
         let removed = app.apply_local(Command::DeleteContact("lic".to_string()));
-        assert!(matches!(removed, Some(Command::RemoveContact { ref name, .. }) if name == "Alice"));
+        assert!(
+            matches!(removed, Some(Command::RemoveContact { ref name, .. }) if name == "Alice")
+        );
     }
 
     #[test]
     fn contact_del_refuses_a_name_that_matches_several_contacts() {
         let mut app = app_with_bob_and_bobby();
-        assert_eq!(app.apply_local(Command::DeleteContact("bo".to_string())), None);
+        assert_eq!(
+            app.apply_local(Command::DeleteContact("bo".to_string())),
+            None
+        );
         assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
         assert_eq!(last_message(&app), "'bo' matches 2 contacts: Bob, Bobby");
-        assert_eq!(app.apply_local(Command::DeleteContact("Zed".to_string())), None);
+        assert_eq!(
+            app.apply_local(Command::DeleteContact("Zed".to_string())),
+            None
+        );
         assert_eq!(last_message(&app), "Contact 'Zed' not found");
     }
 
@@ -751,7 +990,10 @@ mod tests {
     fn deleted_contact_leaves_the_reloaded_list() {
         let mut app = app_with_bob_and_bobby();
         let contacts = vec![contact("Alice", [3; 6])];
-        app.apply_outcome(Ok(Outcome::ContactRemoved { name: "Bob".to_string(), contacts }));
+        app.apply_outcome(Ok(Outcome::ContactRemoved {
+            name: "Bob".to_string(),
+            contacts,
+        }));
         assert_eq!(last_message(&app), "Deleted contact Bob");
         assert_eq!(app.contacts.len(), 1);
     }
@@ -762,25 +1004,41 @@ mod tests {
         assert_eq!(parse_command("/channel 3"), Ok(Command::SwitchChannel(3)));
         assert_eq!(parse_command("/getch 2"), Ok(Command::GetChannel(2)));
         assert_eq!(parse_command("/ch"), Err("Usage: /ch <idx>".to_string()));
-        assert_eq!(parse_command("/getch x"), Err("Channel index must be a number".to_string()));
-        assert_eq!(parse_command("/ch 256"), Err("Channel index must be a number".to_string()));
+        assert_eq!(
+            parse_command("/getch x"),
+            Err("Channel index must be a number".to_string())
+        );
+        assert_eq!(
+            parse_command("/ch 256"),
+            Err("Channel index must be a number".to_string())
+        );
     }
 
     #[test]
     fn parse_setch_without_secret() {
         assert_eq!(
             parse_command("/setch 1 Ops"),
-            Ok(Command::SetChannel { idx: 1, name: "Ops".to_string(), secret: None })
+            Ok(Command::SetChannel {
+                idx: 1,
+                name: "Ops".to_string(),
+                secret: None
+            })
         );
     }
 
     #[test]
     fn parse_setch_with_secret() {
-        let expected: [u8; 16] = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-                                  0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let expected: [u8; 16] = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
         assert_eq!(
             parse_command("/setchannel 1 Ops 00112233445566778899aabbccddeeff"),
-            Ok(Command::SetChannel { idx: 1, name: "Ops".to_string(), secret: Some(expected) })
+            Ok(Command::SetChannel {
+                idx: 1,
+                name: "Ops".to_string(),
+                secret: Some(expected)
+            })
         );
     }
 
@@ -789,14 +1047,25 @@ mod tests {
         let usage = Err("Usage: /setch <idx> <name> [hex_secret_32chars]".to_string());
         assert_eq!(parse_command("/setch"), usage);
         assert_eq!(parse_command("/setch 1"), usage);
-        assert_eq!(parse_command("/setch x Ops"), Err("Channel index must be a number".to_string()));
+        assert_eq!(
+            parse_command("/setch x Ops"),
+            Err("Channel index must be a number".to_string())
+        );
         let bad_secret = Err("Secret must be 32 hex chars (16 bytes)".to_string());
         assert_eq!(parse_command("/setch 1 Ops abcd"), bad_secret);
-        assert_eq!(parse_command("/setch 1 Ops zz112233445566778899aabbccddeeff"), bad_secret);
-        assert_eq!(parse_command("/setch 1 Ops 00112233445566778899aabbccddeeff00"), bad_secret);
-        assert_eq!(parse_command("/setch 1 Ops 00112233445566778899aabbccddeef"), bad_secret);
+        assert_eq!(
+            parse_command("/setch 1 Ops zz112233445566778899aabbccddeeff"),
+            bad_secret
+        );
+        assert_eq!(
+            parse_command("/setch 1 Ops 00112233445566778899aabbccddeeff00"),
+            bad_secret
+        );
+        assert_eq!(
+            parse_command("/setch 1 Ops 00112233445566778899aabbccddeef"),
+            bad_secret
+        );
     }
-
 
     #[test]
     fn help_lists_every_command() {
@@ -804,14 +1073,21 @@ mod tests {
         assert_eq!(app.apply_local(Command::Help), None);
         assert_eq!(app.messages.len(), COMMANDS.len());
         for (msg, spec) in app.messages.iter().zip(COMMANDS) {
-            assert!(msg.text.starts_with(spec.name), "{} missing from help", spec.name);
+            assert!(
+                msg.text.starts_with(spec.name),
+                "{} missing from help",
+                spec.name
+            );
         }
     }
 
     #[test]
     fn help_line_shows_args_and_aliases() {
         let spec = find_command("/getch").unwrap();
-        assert_eq!(spec.help_line(), "/getch <idx> — show channel info (/getchannel)");
+        assert_eq!(
+            spec.help_line(),
+            "/getch <idx> — show channel info (/getchannel)"
+        );
     }
 
     #[test]
@@ -860,11 +1136,14 @@ mod tests {
         app.apply_local(Command::Channels);
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
         let zeros = "00".repeat(16);
-        assert_eq!(texts, vec![
-            "Channels:".to_string(),
-            format!("  #0: A [{}]", zeros),
-            format!("  #1: B [{}] \u{25c0}", zeros),
-        ]);
+        assert_eq!(
+            texts,
+            vec![
+                "Channels:".to_string(),
+                format!("  #0: A [{}]", zeros),
+                format!("  #1: B [{}] \u{25c0}", zeros),
+            ]
+        );
     }
 
     #[test]
@@ -914,10 +1193,17 @@ mod tests {
     #[test]
     fn radio_commands_are_returned_unhandled() {
         let mut app = App::new(0);
-        for cmd in [Command::Contacts, Command::Advert, Command::Battery, Command::GetChannel(1),
-                    Command::Name("x".to_string())] {
+        for cmd in [
+            Command::Contacts,
+            Command::Advert,
+            Command::Battery,
+            Command::GetChannel(1),
+            Command::Name("x".to_string()),
+        ] {
             let expected = format!("{:?}", cmd);
-            let returned = app.apply_local(cmd).expect("radio command was handled locally");
+            let returned = app
+                .apply_local(cmd)
+                .expect("radio command was handled locally");
             assert_eq!(format!("{:?}", returned), expected);
         }
         assert!(app.messages.is_empty());
@@ -948,7 +1234,10 @@ mod tests {
     #[test]
     fn submit_runs_radio_commands_on_the_radio() {
         let mut app = connected_app();
-        assert!(matches!(app.submit("/bat"), Some(Effect::Radio(Command::Battery))));
+        assert!(matches!(
+            app.submit("/bat"),
+            Some(Effect::Radio(Command::Battery))
+        ));
     }
 
     #[test]
@@ -956,15 +1245,23 @@ mod tests {
         let mut app = connected_app();
         app.select_contact(1);
         let effect = app.submit("hi");
-        assert!(matches!(effect, Some(Effect::Send { to: Recipient::Contact(ref c), ref text })
-            if c.adv_name == "c1" && text == "hi"));
+        assert!(
+            matches!(effect, Some(Effect::Send { to: Recipient::Contact(ref c), ref text })
+            if c.adv_name == "c1" && text == "hi")
+        );
     }
 
     #[test]
     fn submit_sends_text_to_the_active_channel() {
         let mut app = connected_app();
         app.active_channel = 1;
-        assert!(matches!(app.submit("hi"), Some(Effect::Send { to: Recipient::Channel(1), .. })));
+        assert!(matches!(
+            app.submit("hi"),
+            Some(Effect::Send {
+                to: Recipient::Channel(1),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -981,7 +1278,11 @@ mod tests {
     // ── Radio outcomes ───────────────────────────────────────────────────────
 
     fn channel_info(channel_idx: u8, name: &str) -> ChannelInfoData {
-        ChannelInfoData { channel_idx, name: name.to_string(), secret: [0xab; 16] }
+        ChannelInfoData {
+            channel_idx,
+            name: name.to_string(),
+            secret: [0xab; 16],
+        }
     }
 
     #[test]
@@ -1006,14 +1307,20 @@ mod tests {
         app.select_contact(0);
         let reordered = vec![app.contacts[1].clone(), app.contacts[0].clone()];
         app.apply_outcome(Ok(Outcome::Contacts(reordered)));
-        assert!(matches!(app.submit("hi"), Some(Effect::Send { to: Recipient::Contact(ref c), .. })
-            if c.adv_name == "c0"));
+        assert!(
+            matches!(app.submit("hi"), Some(Effect::Send { to: Recipient::Contact(ref c), .. })
+            if c.adv_name == "c0")
+        );
     }
 
     #[test]
     fn battery_outcome_records_level_and_storage() {
         let mut app = App::new(0);
-        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo { battery_mv: 4012, used_kb: Some(5), total_kb: Some(110) })));
+        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo {
+            battery_mv: 4012,
+            used_kb: Some(5),
+            total_kb: Some(110),
+        })));
         assert_eq!(app.battery_level, Some(4012));
         assert_eq!(last_message(&app), "Battery: 4.012V  Storage: 5/110 KB");
     }
@@ -1021,7 +1328,11 @@ mod tests {
     #[test]
     fn battery_outcome_without_storage() {
         let mut app = App::new(0);
-        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo { battery_mv: 4012, used_kb: None, total_kb: Some(110) })));
+        app.apply_outcome(Ok(Outcome::Battery(BatteryInfo {
+            battery_mv: 4012,
+            used_kb: None,
+            total_kb: Some(110),
+        })));
         assert_eq!(last_message(&app), "Battery: 4.012V  Storage: N/A");
     }
 
@@ -1037,25 +1348,41 @@ mod tests {
     #[test]
     fn channel_set_outcome_stores_channel_and_shows_secret() {
         let mut app = App::new(0);
-        app.apply_outcome(Ok(Outcome::ChannelSet { idx: 1, name: "Ops".to_string(), secret: [0xab; 16] }));
+        app.apply_outcome(Ok(Outcome::ChannelSet {
+            idx: 1,
+            name: "Ops".to_string(),
+            secret: [0xab; 16],
+        }));
         assert_eq!(app.channels[&1].name, "Ops");
         assert_eq!(app.channels[&1].secret, [0xab; 16]);
-        assert_eq!(last_message(&app), format!("Channel #1 set: name='Ops' secret={}", "ab".repeat(16)));
+        assert_eq!(
+            last_message(&app),
+            format!("Channel #1 set: name='Ops' secret={}", "ab".repeat(16))
+        );
     }
 
     #[test]
     fn channel_info_outcome_stores_named_channel() {
         let mut app = App::new(0);
-        app.apply_outcome(Ok(Outcome::ChannelInfo { idx: 1, info: channel_info(5, "Ops") }));
+        app.apply_outcome(Ok(Outcome::ChannelInfo {
+            idx: 1,
+            info: channel_info(5, "Ops"),
+        }));
         assert_eq!(app.channels[&1].name, "Ops");
         assert_eq!(app.fw_channel_map[&5], 1);
-        assert_eq!(last_message(&app), format!("Channel #1 (fw#5): name='Ops' secret={}", "ab".repeat(16)));
+        assert_eq!(
+            last_message(&app),
+            format!("Channel #1 (fw#5): name='Ops' secret={}", "ab".repeat(16))
+        );
     }
 
     #[test]
     fn channel_info_outcome_with_empty_name_is_not_stored() {
         let mut app = App::new(0);
-        app.apply_outcome(Ok(Outcome::ChannelInfo { idx: 1, info: channel_info(5, "") }));
+        app.apply_outcome(Ok(Outcome::ChannelInfo {
+            idx: 1,
+            info: channel_info(5, ""),
+        }));
         assert!(app.channels.is_empty());
         assert!(app.fw_channel_map.is_empty());
         assert!(last_message(&app).starts_with("Channel #1 (fw#5): name=''"));
@@ -1077,7 +1404,13 @@ mod tests {
         }
         app.apply_outcome(Ok(Outcome::RadioStats(Ok(radio_stats(-110)))));
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
-        assert_eq!(texts, vec!["Radio stats unavailable: timeout", "Radio stats available again"]);
+        assert_eq!(
+            texts,
+            vec![
+                "Radio stats unavailable: timeout",
+                "Radio stats available again"
+            ]
+        );
         assert_eq!(app.messages[0].msg_type, MsgType::Error);
     }
 
@@ -1085,21 +1418,41 @@ mod tests {
     fn diagnostics_failures_show_one_error_and_one_recovery() {
         let mut app = App::new(0);
         for _ in 0..3 {
-            let reading = DiagnosticsReading { clock: Err("timeout".to_string()), ..diagnostics_reading() };
+            let reading = DiagnosticsReading {
+                clock: Err("timeout".to_string()),
+                ..diagnostics_reading()
+            };
             app.apply_outcome(Ok(Outcome::Diagnostics(reading)));
         }
         app.apply_outcome(Ok(Outcome::Diagnostics(diagnostics_reading())));
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
-        assert_eq!(texts, vec!["Radio diagnostics unavailable: timeout", "Radio diagnostics available again"]);
+        assert_eq!(
+            texts,
+            vec![
+                "Radio diagnostics unavailable: timeout",
+                "Radio diagnostics available again"
+            ]
+        );
         assert_eq!(app.diagnostics.packets.unwrap().recv, 1292);
     }
 
     #[test]
     fn sent_outcomes_log_outgoing_messages() {
         let mut app = App::new(0);
-        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
-        app.apply_outcome(Ok(Outcome::DirectSent { contact: contact("Alice", [1; 6]), text: "yo".to_string(), info }));
-        app.apply_outcome(Ok(Outcome::ChannelSent { channel: 0, text: "hey".to_string() }));
+        let info = MsgSentInfo {
+            message_type: 0,
+            expected_ack: [1, 2, 3, 4],
+            suggested_timeout: 5000,
+        };
+        app.apply_outcome(Ok(Outcome::DirectSent {
+            contact: contact("Alice", [1; 6]),
+            text: "yo".to_string(),
+            info,
+        }));
+        app.apply_outcome(Ok(Outcome::ChannelSent {
+            channel: 0,
+            text: "hey".to_string(),
+        }));
         assert_eq!(app.tx_count, 2);
         let texts: Vec<&str> = app.messages.iter().map(|m| m.text.as_str()).collect();
         assert_eq!(texts, vec!["yo", "hey"]);

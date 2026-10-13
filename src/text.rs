@@ -15,7 +15,10 @@ pub fn sanitize(s: &str) -> String {
             continue;
         }
         let shown = if cluster.starts_with(is_pictograph) {
-            cluster.rsplit(ZWJ).find(|part| !part.is_empty()).unwrap_or(cluster)
+            cluster
+                .rsplit(ZWJ)
+                .find(|part| !part.is_empty())
+                .unwrap_or(cluster)
         } else {
             cluster
         };
@@ -91,7 +94,12 @@ pub fn truncate_to_width(s: &str, max_width: usize) -> String {
 
 /// Format seconds as days, hours, minutes and seconds, leaving out zero units (e.g. "1d4h32s")
 pub fn format_duration(secs: u32) -> String {
-    let units = [(secs / 86_400, "d"), (secs / 3_600 % 24, "h"), (secs / 60 % 60, "m"), (secs % 60, "s")];
+    let units = [
+        (secs / 86_400, "d"),
+        (secs / 3_600 % 24, "h"),
+        (secs / 60 % 60, "m"),
+        (secs % 60, "s"),
+    ];
     let text: String = units
         .iter()
         .filter(|(n, _)| *n > 0)
@@ -130,8 +138,14 @@ mod tests {
 
     #[test]
     fn url_decode_turns_plus_and_percent_escapes_into_text() {
-        assert_eq!(url_decode("Example+Contact").as_deref(), Some("Example Contact"));
-        assert_eq!(url_decode("Hilltop%20%F0%9F%96%96").as_deref(), Some("Hilltop 🖖"));
+        assert_eq!(
+            url_decode("Example+Contact").as_deref(),
+            Some("Example Contact")
+        );
+        assert_eq!(
+            url_decode("Hilltop%20%F0%9F%96%96").as_deref(),
+            Some("Hilltop 🖖")
+        );
         assert_eq!(url_decode("100%25").as_deref(), Some("100%"));
         assert_eq!(url_decode("bad%2"), None);
         assert_eq!(url_decode("bad%zz"), None);
@@ -184,12 +198,18 @@ mod tests {
     #[test]
     fn sanitize_reduces_other_emoji_sequences_to_their_base() {
         assert_eq!(sanitize("👍🏽 ☀️ 1️⃣"), "👍 ☀ 1");
-        assert_eq!(sanitize("🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"), "🏴");
+        assert_eq!(
+            sanitize("🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"),
+            "🏴"
+        );
     }
 
     #[test]
     fn sanitize_strips_invisible_and_bidi_chars() {
-        assert_eq!(sanitize("a\u{200B}b\u{202E}c\u{2066}d\u{FEFF}e\u{2028}f\u{2060}g\u{200D}h"), "abcdefgh");
+        assert_eq!(
+            sanitize("a\u{200B}b\u{202E}c\u{2066}d\u{FEFF}e\u{2028}f\u{2060}g\u{200D}h"),
+            "abcdefgh"
+        );
     }
 
     #[test]

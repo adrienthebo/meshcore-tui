@@ -11,8 +11,8 @@ use ratatui::{
 
 use crate::app::App;
 use crate::stats::{ClockReading, HISTORY_SECS};
-use crate::theme::Theme;
 use crate::text::{format_duration, sanitize};
+use crate::theme::Theme;
 use crate::ui::{noise_quality, panel, quality_span, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
 
@@ -97,15 +97,30 @@ const LABEL_WIDTH: usize = 10;
 
 /// A reading: its label, muted and padded to `width`, then its value
 fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> [Span<'a>; 2] {
-    [Span::styled(format!("{:<width$}", label), Style::default().fg(theme.muted)), value]
+    [
+        Span::styled(
+            format!("{:<width$}", label),
+            Style::default().fg(theme.muted),
+        ),
+        value,
+    ]
 }
 
 fn value<'a>(theme: &Theme, text: impl Into<std::borrow::Cow<'a, str>>) -> Span<'a> {
     Span::styled(text, Style::default().fg(theme.value))
 }
 
-fn draw_readings(f: &mut Frame, theme: &Theme, title: impl Into<Line<'static>>, rows: Vec<Line>, area: Rect) {
-    f.render_widget(Paragraph::new(rows).block(panel(theme, title, theme.radio_border)), area);
+fn draw_readings(
+    f: &mut Frame,
+    theme: &Theme,
+    title: impl Into<Line<'static>>,
+    rows: Vec<Line>,
+    area: Rect,
+) {
+    f.render_widget(
+        Paragraph::new(rows).block(panel(theme, title, theme.radio_border)),
+        area,
+    );
 }
 
 /// The last packet's signal, and how many packets wait to go out
@@ -119,7 +134,10 @@ fn draw_signal(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Some(p) => quality_span(format!("{:.2} dB", p.snr), snr_quality(p.snr), theme),
         None => value(theme, UNKNOWN),
     };
-    let queue = app.diagnostics.core.map_or(UNKNOWN.to_string(), |core| core.queue_len.to_string());
+    let queue = app
+        .diagnostics
+        .core
+        .map_or(UNKNOWN.to_string(), |core| core.queue_len.to_string());
     let rows = vec![
         Line::from_iter(reading(theme, "Last RSSI", LABEL_WIDTH, rssi)),
         Line::from_iter(reading(theme, "Last SNR", LABEL_WIDTH, snr)),
@@ -149,18 +167,44 @@ fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         None => " Airtime ".to_string(),
     };
     let Some(stats) = app.radio_stats.latest else {
-        return waiting(f, theme, panel(theme, title, theme.radio_border), "waiting for radio stats…", area);
+        return waiting(
+            f,
+            theme,
+            panel(theme, title, theme.radio_border),
+            "waiting for radio stats…",
+            area,
+        );
     };
     let share = |air_secs: u32| match uptime.and_then(|up| duty_cycle(air_secs, up)) {
         Some(fraction) => format!("{:>5.1}%  {}", fraction * 100.0, duty_bar(fraction, 10)),
         None => UNKNOWN.to_string(),
     };
-    let totals = reading(theme, "TX ", 3, value(theme, format_duration(stats.tx_air_secs)))
-        .into_iter()
-        .chain(reading(theme, "  RX ", 5, value(theme, format_duration(stats.rx_air_secs))));
+    let totals = reading(
+        theme,
+        "TX ",
+        3,
+        value(theme, format_duration(stats.tx_air_secs)),
+    )
+    .into_iter()
+    .chain(reading(
+        theme,
+        "  RX ",
+        5,
+        value(theme, format_duration(stats.rx_air_secs)),
+    ));
     let rows = vec![
-        Line::from_iter(reading(theme, "TX", 3, value(theme, share(stats.tx_air_secs)))),
-        Line::from_iter(reading(theme, "RX", 3, value(theme, share(stats.rx_air_secs)))),
+        Line::from_iter(reading(
+            theme,
+            "TX",
+            3,
+            value(theme, share(stats.tx_air_secs)),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "RX",
+            3,
+            value(theme, share(stats.rx_air_secs)),
+        )),
         Line::from_iter(totals),
     ];
     draw_readings(f, theme, title, rows, area);
@@ -189,7 +233,10 @@ fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let row = |label: &'static str, rx: u32, tx: u32| {
         Line::from(vec![
             Span::styled(format!("{:<7}", label), muted),
-            value(theme, format!("{:>8}{:>8}", with_separators(rx), with_separators(tx))),
+            value(
+                theme,
+                format!("{:>8}{:>8}", with_separators(rx), with_separators(tx)),
+            ),
         ])
     };
     let rows = vec![
@@ -215,19 +262,45 @@ fn clock_drift(clock: ClockReading) -> String {
 /// The radio's battery, storage and clock
 fn draw_device(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let block = panel(theme, " Device ", theme.radio_border);
-    let (Some(battery), Some(clock)) = (app.diagnostics.battery.as_ref(), app.diagnostics.clock) else {
+    let (Some(battery), Some(clock)) = (app.diagnostics.battery.as_ref(), app.diagnostics.clock)
+    else {
         return waiting(f, theme, block, "waiting for diagnostics…", area);
     };
     let storage = match (battery.used_kb, battery.total_kb) {
-        (Some(used), Some(total)) => format!("{} / {} KB", with_separators(used), with_separators(total)),
+        (Some(used), Some(total)) => {
+            format!("{} / {} KB", with_separators(used), with_separators(total))
+        }
         _ => UNKNOWN.to_string(),
     };
     let rows = vec![
-        Line::from_iter(reading(theme, "Battery", LABEL_WIDTH, value(theme, format!("{:.2} V", battery.battery_mv as f64 / 1000.0)))),
-        Line::from_iter(reading(theme, "Storage", LABEL_WIDTH, value(theme, storage))),
-        Line::from_iter(reading(theme, "Clock", LABEL_WIDTH, value(theme, clock_drift(clock)))),
+        Line::from_iter(reading(
+            theme,
+            "Battery",
+            LABEL_WIDTH,
+            value(
+                theme,
+                format!("{:.2} V", battery.battery_mv as f64 / 1000.0),
+            ),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "Storage",
+            LABEL_WIDTH,
+            value(theme, storage),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "Clock",
+            LABEL_WIDTH,
+            value(theme, clock_drift(clock)),
+        )),
         // The radio reports its MCU temperature only as self telemetry, which meshcore-rs can't request yet
-        Line::from_iter(reading(theme, "MCU temp", LABEL_WIDTH, value(theme, UNKNOWN))),
+        Line::from_iter(reading(
+            theme,
+            "MCU temp",
+            LABEL_WIDTH,
+            value(theme, UNKNOWN),
+        )),
     ];
     f.render_widget(Paragraph::new(rows).block(block), area);
 }
@@ -254,13 +327,38 @@ fn draw_settings(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Some((Some(version), None)) => version.clone(),
         _ => UNKNOWN.to_string(),
     };
-    let model = device.and_then(|d| d.model.as_deref()).map_or(UNKNOWN.to_string(), sanitize);
+    let model = device
+        .and_then(|d| d.model.as_deref())
+        .map_or(UNKNOWN.to_string(), sanitize);
     let place = location(info.adv_lat, info.adv_lon).unwrap_or("not set".to_string());
     let rows = vec![
-        Line::from_iter(reading(theme, "TX", SETTINGS_LABEL_WIDTH, value(theme, format!("{} / {} dBm", info.tx_power, info.max_tx_power)))),
-        Line::from_iter(reading(theme, "FW", SETTINGS_LABEL_WIDTH, value(theme, sanitize(&firmware)))),
-        Line::from_iter(reading(theme, "Model", SETTINGS_LABEL_WIDTH, value(theme, model))),
-        Line::from_iter(reading(theme, "Loc", SETTINGS_LABEL_WIDTH, value(theme, place))),
+        Line::from_iter(reading(
+            theme,
+            "TX",
+            SETTINGS_LABEL_WIDTH,
+            value(
+                theme,
+                format!("{} / {} dBm", info.tx_power, info.max_tx_power),
+            ),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "FW",
+            SETTINGS_LABEL_WIDTH,
+            value(theme, sanitize(&firmware)),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "Model",
+            SETTINGS_LABEL_WIDTH,
+            value(theme, model),
+        )),
+        Line::from_iter(reading(
+            theme,
+            "Loc",
+            SETTINGS_LABEL_WIDTH,
+            value(theme, place),
+        )),
     ];
     f.render_widget(Paragraph::new(rows).block(block), area);
 }
@@ -278,7 +376,9 @@ const ERROR_LABEL_WIDTH: usize = 18;
 
 /// Each error flag's label, and whether it is set in `errors`
 fn error_flags(errors: u16) -> impl Iterator<Item = (&'static str, bool)> {
-    ERROR_FLAGS.into_iter().map(move |(bit, label)| (label, errors & bit != 0))
+    ERROR_FLAGS
+        .into_iter()
+        .map(move |(bit, label)| (label, errors & bit != 0))
 }
 
 /// Packets the radio failed to read, and the error flags it has raised
@@ -287,8 +387,15 @@ fn draw_errors(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let (Some(core), Some(packets)) = (app.diagnostics.core, app.diagnostics.packets) else {
         return waiting(f, theme, block, "waiting for diagnostics…", area);
     };
-    let recv_errors = packets.recv_errors.map_or(UNKNOWN.to_string(), with_separators);
-    let mut rows = vec![Line::from_iter(reading(theme, "RX errors", ERROR_LABEL_WIDTH, value(theme, recv_errors)))];
+    let recv_errors = packets
+        .recv_errors
+        .map_or(UNKNOWN.to_string(), with_separators);
+    let mut rows = vec![Line::from_iter(reading(
+        theme,
+        "RX errors",
+        ERROR_LABEL_WIDTH,
+        value(theme, recv_errors),
+    ))];
     rows.extend(error_flags(core.errors).map(|(label, set)| {
         let state = if set {
             Span::styled("SET", Style::default().fg(theme.bad))
@@ -305,7 +412,11 @@ fn draw_errors(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 /// labels between those unevenly.
 fn time_axis(theme: &Theme) -> Axis<'static> {
     let minutes = HISTORY_SECS / 60;
-    let labels = [format!("-{}m", minutes), format!("-{}m", minutes / 2), "now".to_string()];
+    let labels = [
+        format!("-{}m", minutes),
+        format!("-{}m", minutes / 2),
+        "now".to_string(),
+    ];
     Axis::default()
         .bounds([-(HISTORY_SECS as f64), 0.0])
         .labels(labels)
@@ -327,11 +438,19 @@ fn padded_bounds(values: impl Iterator<Item = f64>, step: f64) -> Option<(f64, f
         Some((low, high)) => Some((low.min(v), high.max(v))),
         None => Some((v, v)),
     })?;
-    Some(((low / step).floor() * step - step, (high / step).ceil() * step + step))
+    Some((
+        (low / step).floor() * step - step,
+        (high / step).ceil() * step + step,
+    ))
 }
 
 fn waiting(f: &mut Frame, theme: &Theme, block: ratatui::widgets::Block, text: &str, area: Rect) {
-    f.render_widget(Paragraph::new(text).style(Style::default().fg(theme.muted)).block(block), area);
+    f.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(theme.muted))
+            .block(block),
+        area,
+    );
 }
 
 /// Noise floor readings as runs of (seconds before now, dBm); a failed poll ends a run
@@ -341,7 +460,10 @@ fn noise_runs(noise_history: &[Option<i16>]) -> Vec<Vec<(f64, f64)>> {
     let mut runs = vec![Vec::new()];
     for (i, reading) in noise_history.iter().enumerate() {
         match reading {
-            Some(dbm) => runs.last_mut().unwrap().push((-((newest - i) as f64) * interval, *dbm as f64)),
+            Some(dbm) => runs
+                .last_mut()
+                .unwrap()
+                .push((-((newest - i) as f64) * interval, *dbm as f64)),
             None => runs.push(Vec::new()),
         }
     }
@@ -356,15 +478,24 @@ fn draw_noise_chart(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let stats = &app.radio_stats;
     let history: Vec<Option<i16>> = stats.noise_history.iter().copied().collect();
     let readings = history.iter().flatten().copied();
-    let (Some(latest), Some(min), Some(max)) = (stats.latest, readings.clone().min(), readings.max()) else {
+    let (Some(latest), Some(min), Some(max)) =
+        (stats.latest, readings.clone().min(), readings.max())
+    else {
         let block = panel(theme, " Noise floor ", theme.radio_border);
         return waiting(f, theme, block, "waiting for radio stats…", area);
     };
 
     let title = Line::from(vec![
         Span::raw(" Noise floor "),
-        quality_span(format!("{} dBm", latest.noise_floor), noise_quality(latest.noise_floor), theme),
-        Span::styled(format!("  (min {} dBm / max {} dBm) ", min, max), Style::default().fg(theme.text)),
+        quality_span(
+            format!("{} dBm", latest.noise_floor),
+            noise_quality(latest.noise_floor),
+            theme,
+        ),
+        Span::styled(
+            format!("  (min {} dBm / max {} dBm) ", min, max),
+            Style::default().fg(theme.text),
+        ),
     ]);
     let (low, high) = padded_bounds([min as f64, max as f64].into_iter(), 10.0).unwrap();
     let runs = noise_runs(&history);
@@ -401,7 +532,10 @@ fn draw_snr_chart(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
         Span::raw(" SNR "),
         quality_span(format!("{:.2} dB ", last.snr), snr_quality(last.snr), theme),
     ]);
-    let points: Vec<(f64, f64)> = signals.iter().map(|p| ((p.at - now) as f64, p.snr as f64)).collect();
+    let points: Vec<(f64, f64)> = signals
+        .iter()
+        .map(|p| ((p.at - now) as f64, p.snr as f64))
+        .collect();
     let (low, high) = padded_bounds(points.iter().map(|(_, snr)| *snr), 5.0).unwrap();
     let datasets = vec![Dataset::default()
         .marker(Marker::Dot)
@@ -430,7 +564,9 @@ mod tests {
 
     fn render(app: &App, width: u16, height: u16) -> TestBackend {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|f| draw_radio_tab(f, app, &Theme::CLASSIC, NOW, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_radio_tab(f, app, &Theme::CLASSIC, NOW, f.area()))
+            .unwrap();
         terminal.backend().clone()
     }
 
@@ -440,11 +576,19 @@ mod tests {
     fn app_with_history() -> App {
         let mut app = App::new(0);
         for i in 0..60 {
-            let reading = if i == 40 { Err("timeout".to_string()) } else { Ok(radio_stats(-118 + (i * 22 / 59) as i16)) };
+            let reading = if i == 40 {
+                Err("timeout".to_string())
+            } else {
+                Ok(radio_stats(-118 + (i * 22 / 59) as i16))
+            };
             app.radio_stats.record(reading);
         }
         for (ago, snr) in [(600, -9.0), (420, -2.5), (300, 4.0), (120, 7.25), (5, 5.25)] {
-            app.radio_stats.record_packet(PacketSignal { at: NOW - ago, snr, rssi: -90 });
+            app.radio_stats.record_packet(PacketSignal {
+                at: NOW - ago,
+                snr,
+                rssi: -90,
+            });
         }
         let mut reading = diagnostics_reading();
         reading.core.as_mut().unwrap().errors = 1 << 1;
@@ -522,25 +666,41 @@ mod tests {
     #[test]
     fn location_at_zero_is_unset() {
         assert_eq!(location(0, 0), None);
-        assert_eq!(location(52_008_900, -4_353_100), Some("52.0089, -4.3531".to_string()));
+        assert_eq!(
+            location(52_008_900, -4_353_100),
+            Some("52.0089, -4.3531".to_string())
+        );
     }
 
     #[test]
     fn error_flags_decode_each_bit() {
         let flags: Vec<_> = error_flags(0b101).collect();
-        assert_eq!(flags, [("Packet pool full", true), ("CAD busy timeout", false), ("RX stuck >8s", true)]);
+        assert_eq!(
+            flags,
+            [
+                ("Packet pool full", true),
+                ("CAD busy timeout", false),
+                ("RX stuck >8s", true)
+            ]
+        );
         assert!(error_flags(0).all(|(_, set)| !set));
     }
 
     #[test]
     fn failed_polls_split_the_noise_floor() {
         let runs = noise_runs(&[Some(-110), None, Some(-104), Some(-100)]);
-        assert_eq!(runs, [vec![(-15.0, -110.0)], vec![(-5.0, -104.0), (0.0, -100.0)]]);
+        assert_eq!(
+            runs,
+            [vec![(-15.0, -110.0)], vec![(-5.0, -104.0), (0.0, -100.0)]]
+        );
     }
 
     #[test]
     fn bounds_pad_to_the_step() {
-        assert_eq!(padded_bounds([-118.0, -96.0].into_iter(), 10.0), Some((-130.0, -80.0)));
+        assert_eq!(
+            padded_bounds([-118.0, -96.0].into_iter(), 10.0),
+            Some((-130.0, -80.0))
+        );
         assert_eq!(padded_bounds(std::iter::empty(), 5.0), None);
     }
 }

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use chrono::{Local, Utc};
 use meshcore_rs::events::{
-    AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, DeviceInfoData, EventPayload,
-    MsgSentInfo, PathUpdateData, SelfInfo,
+    AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, DeviceInfoData,
+    EventPayload, MsgSentInfo, PathUpdateData, SelfInfo,
 };
 
 use crate::rx_log::RxLog;
@@ -88,7 +88,10 @@ impl Route {
     pub fn from_path_len(path_len: i8) -> Self {
         match path_len as u8 {
             0xff => Route::Flood,
-            byte => Route::Hops { count: byte & 0x3f, hash_size: (byte >> 6) + 1 },
+            byte => Route::Hops {
+                count: byte & 0x3f,
+                hash_size: (byte >> 6) + 1,
+            },
         }
     }
 }
@@ -237,7 +240,11 @@ impl App {
                 false
             }
             EventPayload::LogData(log) => {
-                let signal = PacketSignal { at: Utc::now().timestamp(), snr: log.snr, rssi: log.rssi };
+                let signal = PacketSignal {
+                    at: Utc::now().timestamp(),
+                    snr: log.snr,
+                    rssi: log.rssi,
+                };
                 self.radio_stats.record_packet(signal);
                 self.rx_log.record(now(), log);
                 false
@@ -278,14 +285,22 @@ impl App {
             contact.latitude(),
             contact.longitude(),
         );
-        self.push_packet(PacketKind::Advert, Some(Route::from_path_len(contact.path_len)), info);
+        self.push_packet(
+            PacketKind::Advert,
+            Some(Route::from_path_len(contact.path_len)),
+            info,
+        );
         self.push_advert(sanitize(&contact.adv_name), Some(contact.clone()));
         self.contacts.retain(|c| c.prefix() != contact.prefix());
         self.contacts.push(contact);
     }
 
     fn on_ack(&mut self, tag: &[u8; 4]) {
-        self.push_packet(PacketKind::Ack, None, format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)));
+        self.push_packet(
+            PacketKind::Ack,
+            None,
+            format!("tag:{}", meshcore_rs::parsing::hex_encode(tag)),
+        );
     }
 
     /// The radio found a new route to a contact; the push carries only their key
@@ -361,7 +376,10 @@ impl App {
         self.contacts = contacts;
         if let (Some(name), None) = (selected_name, self.selected_index()) {
             self.selected_key = None;
-            self.err(&format!("Contact {} is no longer in the list; deselected", name));
+            self.err(&format!(
+                "Contact {} is no longer in the list; deselected",
+                name
+            ));
         }
     }
 
@@ -391,10 +409,13 @@ impl App {
         if name.is_empty() {
             return None;
         }
-        self.channels.insert(idx, ChannelEntry {
-            name: name.clone(),
-            secret: info.secret,
-        });
+        self.channels.insert(
+            idx,
+            ChannelEntry {
+                name: name.clone(),
+                secret: info.secret,
+            },
+        );
         self.fw_channel_map.insert(info.channel_idx, idx);
         Some(name)
     }
@@ -465,9 +486,13 @@ mod tests {
         assert!(app.apply_radio_event(EventPayload::ChannelMessage(channel_message(0, "Bob: hi"))));
         assert!(!app.apply_radio_event(EventPayload::Ack { tag: [0; 4] }));
         assert!(!app.apply_radio_event(EventPayload::Contact(contact("Alice", [2; 6]))));
-        let adv = AdvertisementData { public_key: [3; 32] };
+        let adv = AdvertisementData {
+            public_key: [3; 32],
+        };
         assert!(!app.apply_radio_event(EventPayload::Advertisement(adv)));
-        let path = PathUpdateData { public_key: [2; 32] };
+        let path = PathUpdateData {
+            public_key: [2; 32],
+        };
         assert!(!app.apply_radio_event(EventPayload::PathUpdate(path)));
         assert!(!app.apply_radio_event(EventPayload::Time(0)));
         assert_eq!(app.messages.len(), 2);
@@ -478,7 +503,11 @@ mod tests {
     #[test]
     fn rf_log_records_the_packet_and_its_signal() {
         let mut app = App::new(0);
-        let log = LogData { snr: 5.25, rssi: -92, ..Default::default() };
+        let log = LogData {
+            snr: 5.25,
+            rssi: -92,
+            ..Default::default()
+        };
         assert!(!app.apply_radio_event(EventPayload::LogData(log)));
         let signal = app.radio_stats.packet_signals.back().expect("no signal");
         assert_eq!((signal.snr, signal.rssi), (5.25, -92));
@@ -522,9 +551,13 @@ mod tests {
     fn advertisement_names_the_contact() {
         let mut app = App::new(0);
         let repeater = contact("Repeater", [1; 6]);
-        app.on_advertisement(&AdvertisementData { public_key: repeater.public_key });
+        app.on_advertisement(&AdvertisementData {
+            public_key: repeater.public_key,
+        });
         app.contacts.push(repeater.clone());
-        app.on_advertisement(&AdvertisementData { public_key: repeater.public_key });
+        app.on_advertisement(&AdvertisementData {
+            public_key: repeater.public_key,
+        });
         let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
         assert_eq!(infos, vec!["10101010101", "Repeater"]);
         assert!(app.packets.iter().all(|p| p.kind == PacketKind::Advert));
@@ -539,7 +572,10 @@ mod tests {
         app.on_new_contact(contact("Bob\u{FFFD}", [3; 6]));
         let advert = app.adverts.last().unwrap();
         assert_eq!(advert.name, "Bob");
-        assert_eq!(advert.new_contact.as_ref().unwrap().public_key, contact("Bob", [3; 6]).public_key);
+        assert_eq!(
+            advert.new_contact.as_ref().unwrap().public_key,
+            contact("Bob", [3; 6]).public_key
+        );
     }
 
     #[test]
@@ -549,7 +585,10 @@ mod tests {
             app.on_new_contact(contact(&format!("c{}", i), [1; 6]));
         }
         assert_eq!(app.adverts.len(), MAX_ADVERTS);
-        assert_eq!(app.adverts.last().unwrap().name, format!("c{}", MAX_ADVERTS + 4));
+        assert_eq!(
+            app.adverts.last().unwrap().name,
+            format!("c{}", MAX_ADVERTS + 4)
+        );
     }
 
     #[test]
@@ -563,7 +602,13 @@ mod tests {
         let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
         assert_eq!(names, vec!["Other", "New name"]);
         assert_eq!(last_packet(&app).kind, PacketKind::Advert);
-        assert_eq!(last_packet(&app).route, Some(Route::Hops { count: 2, hash_size: 1 }));
+        assert_eq!(
+            last_packet(&app).route,
+            Some(Route::Hops {
+                count: 2,
+                hash_size: 1
+            })
+        );
     }
 
     #[test]
@@ -577,10 +622,34 @@ mod tests {
 
     #[test]
     fn route_decodes_the_hash_size_from_the_top_bits() {
-        assert_eq!(Route::from_path_len(0x03), Route::Hops { count: 3, hash_size: 1 });
-        assert_eq!(Route::from_path_len(0x43), Route::Hops { count: 3, hash_size: 2 });
-        assert_eq!(Route::from_path_len(0x82u8 as i8), Route::Hops { count: 2, hash_size: 3 });
-        assert_eq!(Route::from_path_len(0), Route::Hops { count: 0, hash_size: 1 });
+        assert_eq!(
+            Route::from_path_len(0x03),
+            Route::Hops {
+                count: 3,
+                hash_size: 1
+            }
+        );
+        assert_eq!(
+            Route::from_path_len(0x43),
+            Route::Hops {
+                count: 3,
+                hash_size: 2
+            }
+        );
+        assert_eq!(
+            Route::from_path_len(0x82u8 as i8),
+            Route::Hops {
+                count: 2,
+                hash_size: 3
+            }
+        );
+        assert_eq!(
+            Route::from_path_len(0),
+            Route::Hops {
+                count: 0,
+                hash_size: 1
+            }
+        );
         assert_eq!(Route::from_path_len(-1), Route::Flood);
     }
 
@@ -596,9 +665,13 @@ mod tests {
     fn path_update_names_the_contact() {
         let mut app = App::new(0);
         let alice = contact("Alice", [1; 6]);
-        app.on_path_update(&PathUpdateData { public_key: alice.public_key });
+        app.on_path_update(&PathUpdateData {
+            public_key: alice.public_key,
+        });
         app.contacts.push(alice.clone());
-        app.on_path_update(&PathUpdateData { public_key: alice.public_key });
+        app.on_path_update(&PathUpdateData {
+            public_key: alice.public_key,
+        });
         let infos: Vec<&str> = app.packets.iter().map(|p| p.info.as_str()).collect();
         assert_eq!(infos, vec!["10101010101", "Alice"]);
         assert!(app.packets.iter().all(|p| p.kind == PacketKind::Path));
@@ -607,7 +680,11 @@ mod tests {
     #[test]
     fn direct_sent_logs_message_and_packet() {
         let mut app = App::new(0);
-        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
+        let info = MsgSentInfo {
+            message_type: 0,
+            expected_ack: [1, 2, 3, 4],
+            suggested_timeout: 5000,
+        };
         app.on_direct_sent(&contact("Alice", [1; 6]), "yo", &info);
         let msg = app.messages.last().unwrap();
         assert_eq!(msg.sender, "\u{2192} Alice");
@@ -631,7 +708,11 @@ mod tests {
     #[test]
     fn sent_messages_are_sanitized_like_received_ones() {
         let mut app = App::new(0);
-        let info = MsgSentInfo { message_type: 0, expected_ack: [1, 2, 3, 4], suggested_timeout: 5000 };
+        let info = MsgSentInfo {
+            message_type: 0,
+            expected_ack: [1, 2, 3, 4],
+            suggested_timeout: 5000,
+        };
         app.on_direct_sent(&contact("Alice", [1; 6]), "hi 🏳️‍🌈", &info);
         assert_eq!(last_message(&app), "hi 🌈");
         app.on_channel_sent(2, "🇩🇪 yo");
@@ -652,7 +733,11 @@ mod tests {
     #[test]
     fn packets_are_capped_including_sent_entries() {
         let mut app = App::new(0);
-        let info = MsgSentInfo { message_type: 0, expected_ack: [0; 4], suggested_timeout: 0 };
+        let info = MsgSentInfo {
+            message_type: 0,
+            expected_ack: [0; 4],
+            suggested_timeout: 0,
+        };
         let alice = contact("Alice", [1; 6]);
         for _ in 0..MAX_PACKETS + 5 {
             app.on_direct_sent(&alice, "x", &info);
@@ -689,7 +774,11 @@ mod tests {
     #[test]
     fn store_channel_records_sanitized_name_and_firmware_index() {
         let mut app = App::new(0);
-        let info = ChannelInfoData { channel_idx: 5, name: "Ops\u{0}".to_string(), secret: [7; 16] };
+        let info = ChannelInfoData {
+            channel_idx: 5,
+            name: "Ops\u{0}".to_string(),
+            secret: [7; 16],
+        };
         assert_eq!(app.store_channel(1, &info), Some("Ops".to_string()));
         assert_eq!(app.channels[&1].secret, [7; 16]);
         assert_eq!(app.channel_label(5), "Ops");
@@ -698,7 +787,11 @@ mod tests {
     #[test]
     fn store_channel_skips_unnamed_slots() {
         let mut app = App::new(0);
-        let info = ChannelInfoData { channel_idx: 5, name: "\u{0}".to_string(), secret: [7; 16] };
+        let info = ChannelInfoData {
+            channel_idx: 5,
+            name: "\u{0}".to_string(),
+            secret: [7; 16],
+        };
         assert_eq!(app.store_channel(1, &info), None);
         assert!(app.channels.is_empty());
         assert!(app.fw_channel_map.is_empty());
@@ -775,7 +868,10 @@ mod tests {
         app.set_contacts(remaining);
         assert_eq!(app.selected_key, None);
         assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
-        assert_eq!(last_message(&app), "Contact c1 is no longer in the list; deselected");
+        assert_eq!(
+            last_message(&app),
+            "Contact c1 is no longer in the list; deselected"
+        );
     }
 
     #[test]

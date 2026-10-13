@@ -92,7 +92,9 @@ impl View for InputLine {
     /// Edit the line, refusing chars past the radio's limit; Enter submits it
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match key.code {
-            KeyCode::Enter if !self.is_empty() => return KeyResult::Action(Action::Submit(self.take())),
+            KeyCode::Enter if !self.is_empty() => {
+                return KeyResult::Action(Action::Submit(self.take()))
+            }
             KeyCode::Char(c) if self.text.len() + c.len_utf8() > app.text_limit() => {}
             KeyCode::Char(c) => self.insert(c),
             KeyCode::Backspace => self.backspace(),
@@ -199,7 +201,10 @@ mod tests {
     // ── Keys ─────────────────────────────────────────────────────────────────
 
     fn press(line: &mut InputLine, code: KeyCode) -> KeyResult {
-        line.handle_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE), &App::new(0))
+        line.handle_key(
+            KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+            &App::new(0),
+        )
     }
 
     #[test]
@@ -227,7 +232,10 @@ mod tests {
     #[test]
     fn enter_submits_and_clears_the_line() {
         let mut line = typed("x");
-        assert_eq!(press(&mut line, KeyCode::Enter), KeyResult::Action(Action::Submit("x".to_string())));
+        assert_eq!(
+            press(&mut line, KeyCode::Enter),
+            KeyResult::Action(Action::Submit("x".to_string()))
+        );
         assert!(line.is_empty());
     }
 

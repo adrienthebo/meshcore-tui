@@ -10,8 +10,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::app::App;
 use crate::commands::{run_radio_command, Outcome};
 use crate::stats::{ClockReading, DiagnosticsReading};
-use crate::update::{Effect, Recipient};
 use crate::text::sanitize;
+use crate::update::{Effect, Recipient};
 use crate::Args;
 
 // ── MeshCore Integration ─────────────────────────────────────────────────────
@@ -83,7 +83,8 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
     // AppStart → get SelfInfo
     match mc.commands().lock().await.send_appstart().await {
         Ok(info) => {
-            app.sys(&format!("Connected: {} (freq: {} MHz, SF{}, CR{}, BW {} kHz)",
+            app.sys(&format!(
+                "Connected: {} (freq: {} MHz, SF{}, CR{}, BW {} kHz)",
                 sanitize(&info.name),
                 info.radio_freq as f64 / 1_000.0,
                 info.sf,
@@ -135,7 +136,13 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
     } else {
         Duration::from_secs(5)
     };
-    match mc.commands().lock().await.get_contacts_with_timeout(0, contacts_timeout).await {
+    match mc
+        .commands()
+        .lock()
+        .await
+        .get_contacts_with_timeout(0, contacts_timeout)
+        .await
+    {
         Ok(contacts) => {
             app.sys(&format!("Loaded {} contacts", contacts.len()));
             app.set_contacts(contacts);
@@ -155,7 +162,11 @@ pub async fn connect(app: &mut App, args: &Args) -> Option<MeshCore> {
             }
         }
         if !names.is_empty() {
-            app.sys(&format!("Loaded {} channels: {}", names.len(), names.join(", ")));
+            app.sys(&format!(
+                "Loaded {} channels: {}",
+                names.len(),
+                names.join(", ")
+            ));
         }
     }
 
@@ -212,28 +223,74 @@ pub async fn run_radio_effects(
 
 /// Read the radio's stats; a failed read is part of the outcome so polling can report it once
 async fn read_radio_stats(mc: &MeshCore) -> Result<Outcome, String> {
-    let stats = mc.commands().lock().await.get_radio_stats().await.map_err(|e| e.to_string());
+    let stats = mc
+        .commands()
+        .lock()
+        .await
+        .get_radio_stats()
+        .await
+        .map_err(|e| e.to_string());
     Ok(Outcome::RadioStats(stats))
 }
 
 /// Read the Radio tab's diagnostics one after another; each read can fail on its own
 async fn read_diagnostics(mc: &MeshCore) -> DiagnosticsReading {
     let err = |e: meshcore_rs::Error| e.to_string();
-    let core = mc.commands().lock().await.get_core_stats().await.map_err(err);
-    let packets = mc.commands().lock().await.get_packet_stats().await.map_err(err);
+    let core = mc
+        .commands()
+        .lock()
+        .await
+        .get_core_stats()
+        .await
+        .map_err(err);
+    let packets = mc
+        .commands()
+        .lock()
+        .await
+        .get_packet_stats()
+        .await
+        .map_err(err);
     let battery = mc.commands().lock().await.get_bat().await.map_err(err);
-    let clock = mc.commands().lock().await.get_time().await.map_err(err)
-        .map(|radio| ClockReading { radio, host: Utc::now().timestamp() });
-    DiagnosticsReading { core, packets, battery, clock }
+    let clock = mc
+        .commands()
+        .lock()
+        .await
+        .get_time()
+        .await
+        .map_err(err)
+        .map(|radio| ClockReading {
+            radio,
+            host: Utc::now().timestamp(),
+        });
+    DiagnosticsReading {
+        core,
+        packets,
+        battery,
+        clock,
+    }
 }
 
 /// Send a chat message; the error is the text to show the user
 async fn send_text(mc: &MeshCore, to: Recipient, text: String) -> Result<Outcome, String> {
     match to {
-        Recipient::Contact(contact) => mc.commands().lock().await.send_msg(&contact, &text, None).await
-            .map(|info| Outcome::DirectSent { contact, text, info })
+        Recipient::Contact(contact) => mc
+            .commands()
+            .lock()
+            .await
+            .send_msg(&contact, &text, None)
+            .await
+            .map(|info| Outcome::DirectSent {
+                contact,
+                text,
+                info,
+            })
             .map_err(|e| format!("Send failed: {}", e)),
-        Recipient::Channel(channel) => mc.commands().lock().await.send_channel_msg(channel, &text, None).await
+        Recipient::Channel(channel) => mc
+            .commands()
+            .lock()
+            .await
+            .send_channel_msg(channel, &text, None)
+            .await
             .map(|_| Outcome::ChannelSent { channel, text })
             .map_err(|e| format!("Channel send failed: {}", e)),
     }

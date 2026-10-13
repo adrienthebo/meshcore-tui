@@ -57,9 +57,15 @@ impl Widget for TabBar<'_> {
             let label = format!(" {} {} ", i + 1, title);
             let width = label.width();
             if i == self.selected {
-                top.push(Span::styled(format!("╭{}╮", "─".repeat(width)), self.active));
+                top.push(Span::styled(
+                    format!("╭{}╮", "─".repeat(width)),
+                    self.active,
+                ));
                 bottom.push(Span::styled("╯", self.active));
-                bottom.push(Span::styled(label, self.active.add_modifier(Modifier::BOLD)));
+                bottom.push(Span::styled(
+                    label,
+                    self.active.add_modifier(Modifier::BOLD),
+                ));
                 bottom.push(Span::styled("╰", self.active));
             } else {
                 top.push(Span::raw(" ".repeat(width + 2)));
@@ -69,7 +75,10 @@ impl Widget for TabBar<'_> {
             bottom.push(Span::styled("─", self.rule));
         }
         let used: usize = bottom.iter().map(|span| span.width()).sum();
-        bottom.push(Span::styled("─".repeat((area.width as usize).saturating_sub(used)), self.rule));
+        bottom.push(Span::styled(
+            "─".repeat((area.width as usize).saturating_sub(used)),
+            self.rule,
+        ));
 
         Paragraph::new(vec![Line::from(top), Line::from(bottom)]).render(area, buf);
     }
@@ -122,7 +131,9 @@ mod tests {
     fn selected_tab_is_bold_in_the_active_style_and_the_rest_in_the_rule_style() {
         let active = Style::default().fg(Color::Magenta);
         let rule = Style::default().fg(Color::DarkGray);
-        let bar = TabBar::new(&TITLES, 1).active_style(active).rule_style(rule);
+        let bar = TabBar::new(&TITLES, 1)
+            .active_style(active)
+            .rule_style(rule);
         let buf = render(bar, 60);
 
         // Outline corner, then the selected title
@@ -141,7 +152,10 @@ mod tests {
         let bar = TabBar::new(&TITLES, 1);
         let width = bar.titles_width();
         let row = &rows(&render(bar, 60))[1];
-        assert_eq!(row.chars().take(width).collect::<String>(), "── 1 Overview ──╯ 2 Contacts ╰── 3 Radio ─── 4 Raw ──");
+        assert_eq!(
+            row.chars().take(width).collect::<String>(),
+            "── 1 Overview ──╯ 2 Contacts ╰── 3 Radio ─── 4 Raw ──"
+        );
     }
 
     #[test]

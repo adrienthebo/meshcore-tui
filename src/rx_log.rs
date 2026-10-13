@@ -39,7 +39,11 @@ impl RxPacket {
     /// The packet's length on air; 0 when the push carried no packet
     pub fn len(&self) -> usize {
         let header = self.log.header.as_ref().map_or(0, |h| {
-            let transport = if h.transport_code.is_some() { TRANSPORT_CODE_LEN } else { 0 };
+            let transport = if h.transport_code.is_some() {
+                TRANSPORT_CODE_LEN
+            } else {
+                0
+            };
             HEADER_BYTE_LEN + transport + PATH_BYTE_LEN + h.path.len()
         });
         header + self.log.payload.len()
@@ -59,7 +63,11 @@ impl RxLog {
         if self.packets.len() == RX_LOG_LEN {
             self.packets.pop_front();
         }
-        self.packets.push_back(RxPacket { id: self.next_id, timestamp, log });
+        self.packets.push_back(RxPacket {
+            id: self.next_id,
+            timestamp,
+            log,
+        });
         self.next_id += 1;
     }
 
@@ -147,23 +155,35 @@ impl PacketLayout {
             return None;
         }
         let mut layout = Self::default();
-        layout.push("header", &[header_byte(header)], format!(
-            "route {} · type {} ({}) · ver {}",
-            route_label(header.route_type),
-            payload_type_label(header.payload_type),
-            payload_type_name(header.payload_type),
-            header.payload_version
-        ));
+        layout.push(
+            "header",
+            &[header_byte(header)],
+            format!(
+                "route {} · type {} ({}) · ver {}",
+                route_label(header.route_type),
+                payload_type_label(header.payload_type),
+                payload_type_name(header.payload_type),
+                header.payload_version
+            ),
+        );
         if let Some(code) = header.transport_code {
             layout.push("transport code", &code, hex_encode(&code));
         }
         let path_byte = ((header.path_hash_size - 1) << HASH_SIZE_SHIFT) | header.path_len;
-        layout.push("path len", &[path_byte], format!(
-            "{} × {}",
-            plural(header.path_len.into(), "hop"),
-            plural(header.path_hash_size.into(), "byte")
-        ));
-        let hops: Vec<String> = header.path.chunks(header.path_hash_size.into()).map(hex_encode).collect();
+        layout.push(
+            "path len",
+            &[path_byte],
+            format!(
+                "{} × {}",
+                plural(header.path_len.into(), "hop"),
+                plural(header.path_hash_size.into(), "byte")
+            ),
+        );
+        let hops: Vec<String> = header
+            .path
+            .chunks(header.path_hash_size.into())
+            .map(hex_encode)
+            .collect();
         layout.push("path", &header.path, hops.join(","));
         match payload_parts(header.payload_type, &log.payload) {
             Some(parts) => {
@@ -181,7 +201,12 @@ impl PacketLayout {
         if bytes.is_empty() {
             return;
         }
-        self.fields.push(Field { name, offset: self.bytes.len(), len: bytes.len(), value });
+        self.fields.push(Field {
+            name,
+            offset: self.bytes.len(),
+            len: bytes.len(),
+            value,
+        });
         self.bytes.extend_from_slice(bytes);
     }
 }
@@ -219,7 +244,11 @@ fn group_parts(payload: &[u8]) -> Option<Parts<'_>> {
     Some(vec![
         ("channel hash", hash, hex_encode(hash)),
         ("mac", mac, hex_encode(mac)),
-        ("ciphertext", rest, format!("{}, encrypted", plural(rest.len(), "byte"))),
+        (
+            "ciphertext",
+            rest,
+            format!("{}, encrypted", plural(rest.len(), "byte")),
+        ),
     ])
 }
 
@@ -249,15 +278,24 @@ fn advert_parts(payload: &[u8]) -> Option<Parts<'_>> {
     let flags = take(&mut rest, FLAGS_LEN)?;
     let mut parts = vec![
         ("public key", key, hex_encode(key)),
-        ("timestamp", timestamp, utc_time(u32::from_le_bytes(timestamp.try_into().ok()?))),
+        (
+            "timestamp",
+            timestamp,
+            utc_time(u32::from_le_bytes(timestamp.try_into().ok()?)),
+        ),
         ("signature", signature, plural(signature.len(), "byte")),
         ("flags", flags, advert_flags_label(flags[0])),
     ];
     if flags[0] & ADV_LATLON_MASK != 0 {
         let location = take(&mut rest, 2 * COORDINATE_LEN)?;
         let (lat, lon) = location.split_at(COORDINATE_LEN);
-        let degrees = |bytes: &[u8]| i32::from_le_bytes(bytes.try_into().unwrap_or_default()) as f64 / 1e6;
-        parts.push(("location", location, format!("{:.4}, {:.4}", degrees(lat), degrees(lon))));
+        let degrees =
+            |bytes: &[u8]| i32::from_le_bytes(bytes.try_into().unwrap_or_default()) as f64 / 1e6;
+        parts.push((
+            "location",
+            location,
+            format!("{:.4}, {:.4}", degrees(lat), degrees(lon)),
+        ));
     }
     for (mask, name) in [(ADV_FEAT1_MASK, "feature 1"), (ADV_FEAT2_MASK, "feature 2")] {
         if flags[0] & mask != 0 {
@@ -282,7 +320,12 @@ fn advert_flags_label(flags: u8) -> String {
         (ADV_FEAT2_MASK, "feature 2"),
         (ADV_NAME_MASK, "name"),
     ];
-    labels.extend(fields.iter().filter(|(mask, _)| flags & mask != 0).map(|(_, label)| *label));
+    labels.extend(
+        fields
+            .iter()
+            .filter(|(mask, _)| flags & mask != 0)
+            .map(|(_, label)| *label),
+    );
     labels.join(" · ")
 }
 
@@ -315,7 +358,10 @@ mod tests {
     use crate::test_support::*;
 
     fn log(rssi: i16) -> LogData {
-        LogData { rssi, ..Default::default() }
+        LogData {
+            rssi,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -323,8 +369,11 @@ mod tests {
         let mut rx_log = RxLog::default();
         rx_log.record("12:00:00".to_string(), log(-90));
         rx_log.record("12:00:01".to_string(), log(-80));
-        let kept: Vec<(u64, &str, i16)> =
-            rx_log.packets.iter().map(|p| (p.id, p.timestamp.as_str(), p.log.rssi)).collect();
+        let kept: Vec<(u64, &str, i16)> = rx_log
+            .packets
+            .iter()
+            .map(|p| (p.id, p.timestamp.as_str(), p.log.rssi))
+            .collect();
         assert_eq!(kept, vec![(0, "12:00:00", -90), (1, "12:00:01", -80)]);
     }
 
@@ -337,13 +386,25 @@ mod tests {
         assert_eq!(rx_log.packets[1].len(), 0);
         let mut transport = group_text_log(&[], 10);
         transport.header.as_mut().unwrap().transport_code = Some([1, 2, 3, 4]);
-        assert_eq!(RxPacket { id: 0, timestamp: String::new(), log: transport }.len(), 1 + 4 + 1 + 10);
+        assert_eq!(
+            RxPacket {
+                id: 0,
+                timestamp: String::new(),
+                log: transport
+            }
+            .len(),
+            1 + 4 + 1 + 10
+        );
     }
 
     /// What meshcore-rs decodes from a packet as the radio received it
     fn decoded(packet: &[u8]) -> LogData {
         let (header, payload) = meshcore_rs::parsing::parse_mesh_packet_header(packet).unwrap();
-        LogData { header: Some(header), payload: payload.to_vec(), ..Default::default() }
+        LogData {
+            header: Some(header),
+            payload: payload.to_vec(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -363,16 +424,25 @@ mod tests {
 
     #[test]
     fn layout_names_each_field_where_it_starts() {
-        let layout = PacketLayout::of(&decoded(&[0x4f, 1, 2, 3, 4, 0x42, 0xaa, 0xbb, 0xcc, 0xdd, 0xee])).unwrap();
-        let fields: Vec<(&str, usize, usize, &str)> =
-            layout.fields.iter().map(|f| (f.name, f.offset, f.len, f.value.as_str())).collect();
-        assert_eq!(fields, [
-            ("header", 0, 1, "route t-direct · type Ack (ACK) · ver 1"),
-            ("transport code", 1, 4, "01020304"),
-            ("path len", 5, 1, "2 hops × 2 bytes"),
-            ("path", 6, 4, "aabb,ccdd"),
-            ("payload", 10, 1, "1 byte"),
-        ]);
+        let layout = PacketLayout::of(&decoded(&[
+            0x4f, 1, 2, 3, 4, 0x42, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        ]))
+        .unwrap();
+        let fields: Vec<(&str, usize, usize, &str)> = layout
+            .fields
+            .iter()
+            .map(|f| (f.name, f.offset, f.len, f.value.as_str()))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("header", 0, 1, "route t-direct · type Ack (ACK) · ver 1"),
+                ("transport code", 1, 4, "01020304"),
+                ("path len", 5, 1, "2 hops × 2 bytes"),
+                ("path", 6, 4, "aabb,ccdd"),
+                ("payload", 10, 1, "1 byte"),
+            ]
+        );
     }
 
     #[test]
@@ -384,14 +454,31 @@ mod tests {
     }
 
     /// The payload's fields of a flood packet with no hops, as (name, offset in the payload, length, value)
-    fn payload_fields(payload_type: PayloadType, payload: Vec<u8>) -> Vec<(&'static str, usize, usize, String)> {
-        let log = LogData { header: Some(flood_header(payload_type, &[])), payload, ..Default::default() };
+    fn payload_fields(
+        payload_type: PayloadType,
+        payload: Vec<u8>,
+    ) -> Vec<(&'static str, usize, usize, String)> {
+        let log = LogData {
+            header: Some(flood_header(payload_type, &[])),
+            payload,
+            ..Default::default()
+        };
         let layout = PacketLayout::of(&log).unwrap();
         // The header byte and path byte come first
-        layout.fields.into_iter().skip(2).map(|f| (f.name, f.offset - 2, f.len, f.value)).collect()
+        layout
+            .fields
+            .into_iter()
+            .skip(2)
+            .map(|f| (f.name, f.offset - 2, f.len, f.value))
+            .collect()
     }
 
-    fn field(name: &'static str, offset: usize, len: usize, value: &str) -> (&'static str, usize, usize, String) {
+    fn field(
+        name: &'static str,
+        offset: usize,
+        len: usize,
+        value: &str,
+    ) -> (&'static str, usize, usize, String) {
         (name, offset, len, value.to_string())
     }
 
@@ -403,7 +490,10 @@ mod tests {
             field("mac", 1, 2, "4e0b"),
             field("ciphertext", 3, 5, "5 bytes, encrypted"),
         ];
-        assert_eq!(payload_fields(PayloadType::GroupText, payload.clone()), expected);
+        assert_eq!(
+            payload_fields(PayloadType::GroupText, payload.clone()),
+            expected
+        );
         assert_eq!(payload_fields(PayloadType::GroupData, payload), expected);
     }
 
@@ -415,16 +505,24 @@ mod tests {
         app_data.extend((-4_353_100i32).to_le_bytes());
         app_data.extend([0x01, 0x02, 0x03, 0x04]);
         app_data.extend("Zoë 🖖".as_bytes());
-        assert_eq!(payload_fields(PayloadType::Advert, advert_payload(0xf1, &app_data)), [
-            field("public key", 0, 32, &"ab".repeat(32)),
-            field("timestamp", 32, 4, "2026-10-11 12:00:00 UTC"),
-            field("signature", 36, 64, "64 bytes"),
-            field("flags", 100, 1, "Companion · location · feature 1 · feature 2 · name"),
-            field("location", 101, 8, "52.0089, -4.3531"),
-            field("feature 1", 109, 2, "0102"),
-            field("feature 2", 111, 2, "0304"),
-            field("name", 113, 9, "Zoë 🖖"),
-        ]);
+        assert_eq!(
+            payload_fields(PayloadType::Advert, advert_payload(0xf1, &app_data)),
+            [
+                field("public key", 0, 32, &"ab".repeat(32)),
+                field("timestamp", 32, 4, "2026-10-11 12:00:00 UTC"),
+                field("signature", 36, 64, "64 bytes"),
+                field(
+                    "flags",
+                    100,
+                    1,
+                    "Companion · location · feature 1 · feature 2 · name"
+                ),
+                field("location", 101, 8, "52.0089, -4.3531"),
+                field("feature 1", 109, 2, "0102"),
+                field("feature 2", 111, 2, "0304"),
+                field("name", 113, 9, "Zoë 🖖"),
+            ]
+        );
     }
 
     #[test]
@@ -437,12 +535,18 @@ mod tests {
     fn payloads_that_dont_fit_their_layout_stay_one_field() {
         let one_field = |payload_type, payload: Vec<u8>| {
             let len = payload.len();
-            assert_eq!(payload_fields(payload_type, payload), [field("payload", 0, len, &plural(len, "byte"))]);
+            assert_eq!(
+                payload_fields(payload_type, payload),
+                [field("payload", 0, len, &plural(len, "byte"))]
+            );
         };
         // Too short for a channel hash and MAC
         one_field(PayloadType::GroupText, vec![0xd9, 0x4e]);
         // Cut off inside the signature
-        one_field(PayloadType::Advert, advert_payload(0x82, b"x")[..60].to_vec());
+        one_field(
+            PayloadType::Advert,
+            advert_payload(0x82, b"x")[..60].to_vec(),
+        );
         // Says it has a location, but ends first
         one_field(PayloadType::Advert, advert_payload(0x10, &[1, 2, 3]));
         // Bytes after the app data its flags announce

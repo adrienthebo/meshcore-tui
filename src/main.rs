@@ -40,7 +40,10 @@ use view::Ui;
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
-#[command(name = "meshcore-chat", about = "TUI chat for MeshCore mesh networking")]
+#[command(
+    name = "meshcore-chat",
+    about = "TUI chat for MeshCore mesh networking"
+)]
 struct Args {
     /// Serial port (e.g. /dev/ttyACM0)
     #[arg(short, long)]

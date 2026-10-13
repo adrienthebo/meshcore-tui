@@ -82,13 +82,15 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
         Action::Quit => app.should_quit = true,
         Action::Submit(line) => return app.submit(&line).into_iter().collect(),
         Action::SelectContact(idx) => app.select_contact(idx),
-        Action::MessageContact(key) => match app.contacts.iter().position(|c| c.public_key == key) {
-            Some(idx) => {
-                app.select_contact(idx);
-                ui.show_overview();
+        Action::MessageContact(key) => {
+            match app.contacts.iter().position(|c| c.public_key == key) {
+                Some(idx) => {
+                    app.select_contact(idx);
+                    ui.show_overview();
+                }
+                None => app.err("That contact is no longer in the list"),
             }
-            None => app.err("That contact is no longer in the list"),
-        },
+        }
     }
     Vec::new()
 }
@@ -107,14 +109,22 @@ mod tests {
     fn chat_message_alerts() {
         let (mut app, mut ui) = (App::new(0), test_ui());
         let msg = Msg::Radio(EventPayload::ChannelMessage(channel_message(0, "Bob: hi")));
-        assert!(matches!(update(&mut app, &mut ui, msg)[..], [Effect::Alert]));
+        assert!(matches!(
+            update(&mut app, &mut ui, msg)[..],
+            [Effect::Alert]
+        ));
         assert_eq!(last_message(&app), "hi");
     }
 
     #[test]
     fn other_radio_events_do_not_alert() {
         let (mut app, mut ui) = (App::new(0), test_ui());
-        assert!(update(&mut app, &mut ui, Msg::Radio(EventPayload::Ack { tag: [0; 4] })).is_empty());
+        assert!(update(
+            &mut app,
+            &mut ui,
+            Msg::Radio(EventPayload::Ack { tag: [0; 4] })
+        )
+        .is_empty());
         assert_eq!(app.packets.len(), 1);
     }
 
@@ -130,24 +140,55 @@ mod tests {
         let (mut app, mut ui) = (App::new(0), test_ui());
         assert!(update(&mut app, &mut ui, Msg::StatsPollDue).is_empty());
         app.connected = true;
-        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        assert!(matches!(
+            update(&mut app, &mut ui, Msg::StatsPollDue)[..],
+            [Effect::PollRadioStats]
+        ));
         assert!(update(&mut app, &mut ui, Msg::StatsPollDue).is_empty());
-        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
-        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        update(
+            &mut app,
+            &mut ui,
+            Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))),
+        );
+        assert!(matches!(
+            update(&mut app, &mut ui, Msg::StatsPollDue)[..],
+            [Effect::PollRadioStats]
+        ));
     }
 
     #[test]
     fn diagnostics_are_polled_only_while_the_radio_tab_shows() {
         let (mut app, mut ui) = (App::new(0), test_ui());
         app.connected = true;
-        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
-        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
-        ui.active = ui.tabs.iter().position(|tab| tab.title() == "Radio").unwrap();
+        assert!(matches!(
+            update(&mut app, &mut ui, Msg::StatsPollDue)[..],
+            [Effect::PollRadioStats]
+        ));
+        update(
+            &mut app,
+            &mut ui,
+            Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))),
+        );
+        ui.active = ui
+            .tabs
+            .iter()
+            .position(|tab| tab.title() == "Radio")
+            .unwrap();
         let effects = update(&mut app, &mut ui, Msg::StatsPollDue);
-        assert!(matches!(effects[..], [Effect::PollRadioStats, Effect::PollDiagnostics]));
+        assert!(matches!(
+            effects[..],
+            [Effect::PollRadioStats, Effect::PollDiagnostics]
+        ));
         // A diagnostics poll still in flight isn't sent again
-        update(&mut app, &mut ui, Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))));
-        assert!(matches!(update(&mut app, &mut ui, Msg::StatsPollDue)[..], [Effect::PollRadioStats]));
+        update(
+            &mut app,
+            &mut ui,
+            Msg::EffectDone(Ok(Outcome::RadioStats(Ok(radio_stats(-110))))),
+        );
+        assert!(matches!(
+            update(&mut app, &mut ui, Msg::StatsPollDue)[..],
+            [Effect::PollRadioStats]
+        ));
     }
 
     #[test]

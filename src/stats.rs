@@ -77,7 +77,8 @@ impl RadioStats {
 
     /// Record a poll result; returns a notice when polling starts failing or recovers
     pub fn record(&mut self, result: Result<RadioStatsData, String>) -> Option<PollNotice> {
-        self.noise_history.push_back(result.as_ref().ok().map(|s| s.noise_floor));
+        self.noise_history
+            .push_back(result.as_ref().ok().map(|s| s.noise_floor));
         if self.noise_history.len() > NOISE_HISTORY_LEN {
             self.noise_history.pop_front();
         }
@@ -142,7 +143,9 @@ impl Diagnostics {
             reading.battery.as_ref().err(),
             reading.clock.as_ref().err(),
         ];
-        let notice = self.poll.finish(errors.into_iter().flatten().next().cloned());
+        let notice = self
+            .poll
+            .finish(errors.into_iter().flatten().next().cloned());
         self.core = reading.core.ok().or(self.core);
         self.packets = reading.packets.ok().or(self.packets);
         self.battery = reading.battery.ok().or(self.battery.take());
@@ -189,16 +192,26 @@ mod tests {
     fn failures_are_reported_once_until_recovery() {
         let mut stats = RadioStats::default();
         assert_eq!(stats.record(Ok(radio_stats(-110))), None);
-        assert_eq!(stats.record(Err("timeout".to_string())), Some(PollNotice::Failed("timeout".to_string())));
+        assert_eq!(
+            stats.record(Err("timeout".to_string())),
+            Some(PollNotice::Failed("timeout".to_string()))
+        );
         assert_eq!(stats.record(Err("timeout".to_string())), None);
-        assert_eq!(stats.record(Ok(radio_stats(-110))), Some(PollNotice::Recovered));
+        assert_eq!(
+            stats.record(Ok(radio_stats(-110))),
+            Some(PollNotice::Recovered)
+        );
         assert_eq!(stats.record(Ok(radio_stats(-110))), None);
     }
 
     #[test]
     fn packet_signals_keep_only_the_history() {
         let mut stats = RadioStats::default();
-        let signal = |at| PacketSignal { at, snr: 5.0, rssi: -90 };
+        let signal = |at| PacketSignal {
+            at,
+            snr: 5.0,
+            rssi: -90,
+        };
         stats.record_packet(signal(0));
         stats.record_packet(signal(10));
         stats.record_packet(signal(HISTORY_SECS as i64 + 5));
@@ -219,11 +232,20 @@ mod tests {
     fn failed_reads_keep_their_last_value_and_report_once() {
         let mut diagnostics = Diagnostics::default();
         assert_eq!(diagnostics.record(diagnostics_reading()), None);
-        let failed_battery = || DiagnosticsReading { battery: Err("timeout".to_string()), ..diagnostics_reading() };
-        assert_eq!(diagnostics.record(failed_battery()), Some(PollNotice::Failed("timeout".to_string())));
+        let failed_battery = || DiagnosticsReading {
+            battery: Err("timeout".to_string()),
+            ..diagnostics_reading()
+        };
+        assert_eq!(
+            diagnostics.record(failed_battery()),
+            Some(PollNotice::Failed("timeout".to_string()))
+        );
         assert_eq!(diagnostics.record(failed_battery()), None);
         assert_eq!(diagnostics.battery.as_ref().unwrap().battery_mv, 4020);
         assert_eq!(diagnostics.core.unwrap().uptime_secs, 273_600);
-        assert_eq!(diagnostics.record(diagnostics_reading()), Some(PollNotice::Recovered));
+        assert_eq!(
+            diagnostics.record(diagnostics_reading()),
+            Some(PollNotice::Recovered)
+        );
     }
 }
