@@ -18,15 +18,10 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-14
-            cargo_flags: ""
-          # Linux builds leave out BLE: it links libdbus, which blocks a static
-          # musl binary (c87e674).
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
-            cargo_flags: --no-default-features
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
-            cargo_flags: --no-default-features
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +32,7 @@ jobs:
           rustup default stable
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         run: |

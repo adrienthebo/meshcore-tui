@@ -19,7 +19,7 @@ unicode-width = "0.2"
 getrandom = "0.4.3"
 
 [features]
-default = ["ble"]
+default = []
 ble = ["meshcore-rs/ble"]
 
 [dev-dependencies]
