@@ -6,7 +6,7 @@ Toy project: commit on master.
 ## Build and test
 
 - `cargo build`, `cargo test`, `cargo clippy --all-targets`. No new clippy warnings.
-- Rust 1.88+ (`rust-version`), ratatui 0.30, crossterm 0.29.
+- Rust 1.89+ (`rust-version`), ratatui 0.30, crossterm 0.29.
 - Snapshot tests use insta with out-of-band files in `src/snapshots/`. Review
   with `cargo insta review`, or accept with `INSTA_UPDATE=always cargo test`
   and read the snapshot diff before committing.
