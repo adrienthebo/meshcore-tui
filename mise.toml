@@ -1,5 +1,6 @@
 [tools]
 hk = "2.6.0"
+git-cliff = "2.14.2"
 
 [tasks.init]
 description = "Install git hooks and repo git config"
