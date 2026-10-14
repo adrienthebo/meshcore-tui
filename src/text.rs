@@ -92,16 +92,24 @@ pub fn truncate_to_width(s: &str, max_width: usize) -> String {
     result
 }
 
-/// Format seconds as days, hours, minutes and seconds, leaving out zero units (e.g. "1d4h32s")
-pub fn format_duration(secs: u32) -> String {
-    let units = [
-        (secs / 86_400, "d"),
+/// Every unit `format_duration` has, so it keeps them all
+pub const EVERY_UNIT: usize = 5;
+
+/// Format seconds as weeks, days, hours, minutes and seconds, keeping `units`
+/// of them from the largest non-zero one and leaving out zero units (e.g.
+/// "1d4h32s", or "1d4h" with 2 units)
+pub fn format_duration(secs: u32, units: usize) -> String {
+    let places = [
+        (secs / 604_800, "w"),
+        (secs / 86_400 % 7, "d"),
         (secs / 3_600 % 24, "h"),
         (secs / 60 % 60, "m"),
         (secs % 60, "s"),
     ];
-    let text: String = units
+    let text: String = places
         .iter()
+        .skip_while(|(n, _)| *n == 0)
+        .take(units)
         .filter(|(n, _)| *n > 0)
         .map(|(n, unit)| format!("{}{}", n, unit))
         .collect();
@@ -153,11 +161,26 @@ mod tests {
 
     #[test]
     fn durations_use_the_largest_units_and_skip_zeros() {
-        assert_eq!(format_duration(0), "0s");
-        assert_eq!(format_duration(4), "4s");
-        assert_eq!(format_duration(2973), "49m33s");
-        assert_eq!(format_duration(3600), "1h");
-        assert_eq!(format_duration(86_400 + 4 * 3_600 + 32), "1d4h32s");
+        assert_eq!(format_duration(0, EVERY_UNIT), "0s");
+        assert_eq!(format_duration(4, EVERY_UNIT), "4s");
+        assert_eq!(format_duration(2973, EVERY_UNIT), "49m33s");
+        assert_eq!(format_duration(3600, EVERY_UNIT), "1h");
+        assert_eq!(
+            format_duration(86_400 + 4 * 3_600 + 32, EVERY_UNIT),
+            "1d4h32s"
+        );
+        assert_eq!(format_duration(9 * 86_400 + 60, EVERY_UNIT), "1w2d1m");
+    }
+
+    #[test]
+    fn durations_keep_the_given_number_of_units_from_the_largest() {
+        assert_eq!(format_duration(2973, 2), "49m33s");
+        assert_eq!(format_duration(18 * 3_600 + 29 * 60 + 2, 2), "18h29m");
+        assert_eq!(format_duration(875 * 86_400 + 18 * 3_600, 2), "125w");
+        assert_eq!(format_duration(874 * 86_400 + 29 * 60, 2), "124w6d");
+        // A zero unit inside the kept ones is left out, not replaced by a smaller one
+        assert_eq!(format_duration(86_400 + 5 * 60, 2), "1d");
+        assert_eq!(format_duration(86_400 + 4 * 3_600 + 32, 3), "1d4h");
     }
 
     // ── sanitize ─────────────────────────────────────────────────────────────
