@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 - 2026-10-14
 
 ### Added
 
@@ -10,7 +10,15 @@
   (198541c, 245aa31, c049295, 00d3b81, 7753af0, 4fdcd4e)
 - **Contacts tab:** a table of contacts with their type, key, advert age, hops
   and position, most recently heard first, above the adverts the radio
-  reported. Enter on a contact addresses messages to it. (4f19087, 93d3d5c)
+  reported. Enter on a contact addresses messages to it. Advert ages are
+  shown to the minute in their two largest units, and an advert from a clock
+  ahead of ours shows a negative age. The browsed contact and the scrolled
+  adverts stay put as contacts and adverts arrive. (4f19087, 93d3d5c,
+  3fa9ded, 006c663, 2498075, 7c59957, 4ce05a4)
+- **Discovered nodes:** nodes the radio heard but didn't store as contacts
+  are listed under Discovered on the Contacts tab, with when we heard them,
+  instead of among the contacts. `a` on one adds it as a contact; a full
+  contact table is reported as such. (6258e4c, c262d98)
 - **Contact management:** add contacts by name and public key with
   `/contact-add`, from the MeshCore app's `meshcore://contact/add` links, or
   from `meshcore://` biz cards. Delete them by name or public key with
@@ -18,7 +26,8 @@
   (72b643c, e83f861, 215fe65, 35835c7)
 - **Radio diagnostics:** the radio's stats are polled every 5 seconds. The
   Overview's Radio panel graphs the noise floor and shows the last packet's
-  RSSI and SNR and the airtime in days, hours, minutes and seconds.
+  RSSI and SNR and the airtime in its three largest units, from weeks to
+  seconds.
   (c2dc2e1, 6264cfe, 9758448, b25acd6, 7fbab10)
 - **Radio tab:** 20-minute charts of the noise floor and the SNR of every
   received packet, plus signal and TX queue, airtime as a share of uptime,
