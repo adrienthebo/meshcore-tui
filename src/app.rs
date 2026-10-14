@@ -31,6 +31,9 @@ pub struct ChatMessage {
 /// An advert the radio heard
 #[derive(Clone, Debug)]
 pub struct AdvertEntry {
+    /// Counts up from the first advert heard, so it names this advert after
+    /// older ones are dropped
+    pub seq: u64,
     pub timestamp: String,
     /// The contact's name, or its key prefix in hex when it isn't a contact
     pub name: String,
@@ -192,6 +195,7 @@ impl App {
     /// Append an advert, dropping the oldest beyond MAX_ADVERTS
     fn push_advert(&mut self, name: String, new_contact: Option<Contact>) {
         self.adverts.push(AdvertEntry {
+            seq: self.adverts.last().map_or(0, |a| a.seq + 1),
             timestamp: now(),
             name,
             new_contact,
@@ -594,6 +598,9 @@ mod tests {
             app.adverts.last().unwrap().name,
             format!("c{}", MAX_ADVERTS + 4)
         );
+        // Each advert keeps the number it was given as older ones are dropped
+        assert_eq!(app.adverts[0].seq, 5);
+        assert_eq!(app.adverts.last().unwrap().seq, (MAX_ADVERTS + 4) as u64);
     }
 
     #[test]
