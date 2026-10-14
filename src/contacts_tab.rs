@@ -124,14 +124,21 @@ pub fn contact_type_label(contact_type: u8) -> &'static str {
     }
 }
 
-/// How long ago a contact advertised, from the advert's own timestamp; it's
-/// the sender's clock, so a clock ahead of ours reads as "0s ago"
+/// How long ago a contact advertised, to the minute, from the advert's own
+/// timestamp; it's the sender's clock, so a clock ahead of ours gives a
+/// negative age ("-3d"). Both times are cut to whole minutes, so every age in
+/// the table ticks over together once a minute.
 fn advert_age(last_advert: u32, now: i64) -> String {
     if last_advert == 0 {
         return "—".to_string();
     }
-    let secs = (now - last_advert as i64).clamp(0, u32::MAX as i64) as u32;
-    format!("{} ago", format_duration(secs))
+    let minutes = now / 60 - last_advert as i64 / 60;
+    let size = format_duration((minutes.unsigned_abs() * 60).try_into().unwrap_or(u32::MAX));
+    match minutes {
+        0 => "<1m ago".to_string(),
+        ..0 => format!("-{}", size),
+        _ => format!("{} ago", size),
+    }
 }
 
 /// "flood" when the radio has no route to this contact, else the hop count
@@ -402,8 +409,33 @@ mod tests {
     fn advert_age_counts_back_from_now() {
         assert_eq!(advert_age(0, NOW), "—");
         assert_eq!(advert_age((NOW - 3_780) as u32, NOW), "1h3m ago");
+        assert_eq!(advert_age((NOW - 3_789) as u32, NOW), "1h4m ago");
+        assert_eq!(advert_age((NOW - 30) as u32, NOW), "1m ago");
+        assert_eq!(advert_age(NOW as u32, NOW + 30), "<1m ago");
         // The sender's clock is ahead of ours
-        assert_eq!(advert_age((NOW + 60) as u32, NOW), "0s ago");
+        assert_eq!(advert_age((NOW + 30) as u32, NOW), "<1m ago");
+        assert_eq!(advert_age((NOW + 60) as u32, NOW), "-1m");
+        assert_eq!(advert_age((NOW + 3 * 86_400) as u32, NOW), "-3d");
+    }
+
+    #[test]
+    fn adverts_from_the_future_sort_first() {
+        let mut app = app_with_heard_contacts();
+        let mut ahead = contact("Ahead", [0xe5; 6]);
+        ahead.last_advert = (NOW + 3 * 86_400) as u32;
+        app.contacts.push(ahead);
+        let names: Vec<&str> = by_newest_advert(&app)
+            .iter()
+            .map(|c| c.adv_name.as_str())
+            .collect();
+        assert_eq!(names, ["Ahead", "Alice", "Hilltop", "Never heard", "Bob"]);
+    }
+
+    #[test]
+    fn advert_age_ticks_over_on_the_minute() {
+        let heard = (NOW - 3_789) as u32;
+        assert_eq!(advert_age(heard, NOW + 59), advert_age(heard, NOW));
+        assert_eq!(advert_age(heard, NOW + 60), "1h5m ago");
     }
 
     #[test]
