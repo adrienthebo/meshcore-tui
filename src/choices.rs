@@ -1,10 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::{layout::Rect, style::Style, widgets::Paragraph, Frame};
+use ratatui::{
+    layout::Rect,
+    style::{Modifier, Style},
+    widgets::Paragraph,
+    Frame,
+};
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
 /// Marks the highlighted option
-const HIGHLIGHT_SYMBOL: &str = "> ";
+const HIGHLIGHT_SYMBOL: &str = "\u{25b6} ";
 
 /// A short list of labelled options, one highlighted; ↑↓ move the highlight
 /// and Enter chooses it. The caller decides where to draw it, e.g. in a Popover
@@ -63,8 +69,13 @@ impl<T: Copy> Choices<T> {
 
     /// Columns the rows take, highlight symbol included
     pub fn width(&self) -> u16 {
-        let label = self.rows.iter().map(|r| r.label().len()).max().unwrap_or(0);
-        (label + HIGHLIGHT_SYMBOL.len()) as u16
+        let label = self
+            .rows
+            .iter()
+            .map(|r| r.label().width())
+            .max()
+            .unwrap_or(0);
+        (label + HIGHLIGHT_SYMBOL.width()) as u16
     }
 
     /// Rows the options and dividers take
@@ -103,8 +114,8 @@ impl<T: Copy> Choices<T> {
     }
 
     /// The rows as a column, one per line: the highlighted option marked,
-    /// disabled ones muted, dividers as a rule across `area`. Rows past the
-    /// bottom of `area` are cut off
+    /// disabled ones grey and italic, dividers as a rule across `area`. Rows
+    /// past the bottom of `area` are cut off
     pub fn draw(&self, f: &mut Frame, area: Rect, theme: &Theme) {
         for (index, (row, line)) in self.rows.iter().zip(area.rows()).enumerate() {
             let highlighted = index == self.cursor;
@@ -114,16 +125,18 @@ impl<T: Copy> Choices<T> {
                     format!("{HIGHLIGHT_SYMBOL}{label}")
                 }
                 Row::Enabled(label, _) | Row::Disabled(label) => {
-                    format!("{}{label}", " ".repeat(HIGHLIGHT_SYMBOL.len()))
+                    format!("{}{label}", " ".repeat(HIGHLIGHT_SYMBOL.width()))
                 }
             };
-            // A highlighted disabled option keeps its muted text
-            let fg = match row {
-                Row::Enabled(..) if highlighted => theme.selected_fg,
-                Row::Enabled(..) => theme.text,
-                Row::Disabled(_) | Row::Divider => theme.muted,
+            // A highlighted disabled option keeps its disabled look
+            let mut style = match row {
+                Row::Enabled(..) if highlighted => Style::default().fg(theme.selected_fg),
+                Row::Enabled(..) => Style::default().fg(theme.text),
+                Row::Disabled(_) => Style::default()
+                    .fg(theme.disabled)
+                    .add_modifier(Modifier::ITALIC),
+                Row::Divider => Style::default().fg(theme.muted),
             };
-            let mut style = Style::default().fg(fg);
             if highlighted {
                 style = style.bg(theme.selected_bg);
             }
@@ -228,14 +241,16 @@ mod tests {
     }
 
     #[test]
-    fn rows_draw_marked_muted_and_divided() {
+    fn rows_draw_marked_disabled_and_divided() {
         let mut choices = grouped();
         press(&mut choices, KeyCode::Down);
         let backend = render(&choices, 8, 5);
         insta::assert_snapshot!(backend);
         let buffer = backend.buffer();
         let theme = Theme::CLASSIC;
-        assert_eq!(buffer[(2, 0)].fg, theme.muted);
+        assert_eq!(buffer[(2, 0)].fg, theme.disabled);
+        assert!(buffer[(2, 0)].modifier.contains(Modifier::ITALIC));
+        assert!(!buffer[(2, 3)].modifier.contains(Modifier::ITALIC));
         // The highlight spans the row
         assert_eq!(buffer[(7, 1)].bg, theme.selected_bg);
         assert_eq!(buffer[(2, 1)].fg, theme.selected_fg);
@@ -244,10 +259,11 @@ mod tests {
     }
 
     #[test]
-    fn a_highlighted_disabled_option_stays_muted() {
+    fn a_highlighted_disabled_option_stays_grey_and_italic() {
         let buffer = render(&grouped(), 8, 5).buffer().clone();
         let theme = Theme::CLASSIC;
-        assert_eq!(buffer[(2, 0)].fg, theme.muted);
+        assert_eq!(buffer[(2, 0)].fg, theme.disabled);
+        assert!(buffer[(2, 0)].modifier.contains(Modifier::ITALIC));
         assert_eq!(buffer[(2, 0)].bg, theme.selected_bg);
     }
 }

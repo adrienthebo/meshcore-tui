@@ -7,6 +7,8 @@ pub struct Theme {
     pub text: Color,
     /// Timestamps, separators and other secondary text
     pub muted: Color,
+    /// Options shown but not available yet
+    pub disabled: Color,
     /// Border of the panel that has keyboard focus
     pub focus: Color,
     /// Panel titles; None draws each title in its border's colour
@@ -55,6 +57,7 @@ impl Theme {
     pub const CLASSIC: Theme = Theme {
         text: Color::White,
         muted: Color::DarkGray,
+        disabled: Color::DarkGray,
         focus: Color::Yellow,
         title: None,
         info: Color::Cyan,
@@ -94,6 +97,7 @@ impl Theme {
     pub const VAPORWAVE: Theme = Theme {
         text: Color::Reset,
         muted: MARDI_GRAS,
+        disabled: Color::DarkGray,
         focus: CERISE_PINK,
         title: Some(LAVENDER_INDIGO),
         info: AQUAMARINE,
