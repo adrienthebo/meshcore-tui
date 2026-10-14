@@ -30,23 +30,14 @@ impl Choice {
 fn rows(contact_type: u8) -> Vec<Row<Choice>> {
     let mut rows = match contact_type {
         1 => vec![Row::Enabled("Message", Choice::Message)],
-        2 => vec![
-            Row::Disabled("Log in (soon)"),
-            Row::Disabled("Status (soon)"),
-        ],
-        3 => vec![
-            Row::Disabled("Log in (soon)"),
-            Row::Disabled("Read posts (soon)"),
-        ],
+        2 => vec![Row::Disabled("Log in"), Row::Disabled("Status")],
+        3 => vec![Row::Disabled("Log in"), Row::Disabled("Read posts")],
         _ => Vec::new(),
     };
     if !rows.is_empty() {
         rows.push(Row::Divider);
     }
-    rows.extend([
-        Row::Disabled("Favorite (soon)"),
-        Row::Disabled("Delete (soon)"),
-    ]);
+    rows.extend([Row::Disabled("Favorite"), Row::Disabled("Delete")]);
     rows
 }
 
@@ -135,8 +126,8 @@ mod tests {
     fn each_type_offers_its_own_actions_then_the_shared_ones() {
         let shared = [
             Row::Divider,
-            Row::Disabled("Favorite (soon)"),
-            Row::Disabled("Delete (soon)"),
+            Row::Disabled("Favorite"),
+            Row::Disabled("Delete"),
         ];
         let with_shared = |own: &[Row<Choice>]| [own, &shared].concat();
         assert_eq!(
@@ -145,17 +136,11 @@ mod tests {
         );
         assert_eq!(
             rows(2),
-            with_shared(&[
-                Row::Disabled("Log in (soon)"),
-                Row::Disabled("Status (soon)")
-            ])
+            with_shared(&[Row::Disabled("Log in"), Row::Disabled("Status")])
         );
         assert_eq!(
             rows(3),
-            with_shared(&[
-                Row::Disabled("Log in (soon)"),
-                Row::Disabled("Read posts (soon)")
-            ])
+            with_shared(&[Row::Disabled("Log in"), Row::Disabled("Read posts")])
         );
         // Nothing of their own, so nothing to divide
         assert_eq!(rows(4), shared[1..]);
