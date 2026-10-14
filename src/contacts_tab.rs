@@ -124,14 +124,19 @@ pub fn contact_type_label(contact_type: u8) -> &'static str {
     }
 }
 
-/// How long ago a contact advertised, from the advert's own timestamp; it's
-/// the sender's clock, so a clock ahead of ours reads as "0s ago"
+/// How long ago a contact advertised, to the minute, from the advert's own
+/// timestamp; it's the sender's clock, so a clock ahead of ours reads as
+/// "<1m ago". Both times are cut to whole minutes, so every age in the table
+/// ticks over together once a minute.
 fn advert_age(last_advert: u32, now: i64) -> String {
     if last_advert == 0 {
         return "—".to_string();
     }
-    let secs = (now - last_advert as i64).clamp(0, u32::MAX as i64) as u32;
-    format!("{} ago", format_duration(secs))
+    let minutes = (now / 60 - last_advert as i64 / 60).clamp(0, (u32::MAX / 60) as i64) as u32;
+    if minutes == 0 {
+        return "<1m ago".to_string();
+    }
+    format!("{} ago", format_duration(minutes * 60))
 }
 
 /// "flood" when the radio has no route to this contact, else the hop count
@@ -402,8 +407,18 @@ mod tests {
     fn advert_age_counts_back_from_now() {
         assert_eq!(advert_age(0, NOW), "—");
         assert_eq!(advert_age((NOW - 3_780) as u32, NOW), "1h3m ago");
+        assert_eq!(advert_age((NOW - 3_789) as u32, NOW), "1h4m ago");
+        assert_eq!(advert_age((NOW - 30) as u32, NOW), "1m ago");
+        assert_eq!(advert_age(NOW as u32, NOW + 30), "<1m ago");
         // The sender's clock is ahead of ours
-        assert_eq!(advert_age((NOW + 60) as u32, NOW), "0s ago");
+        assert_eq!(advert_age((NOW + 60) as u32, NOW), "<1m ago");
+    }
+
+    #[test]
+    fn advert_age_ticks_over_on_the_minute() {
+        let heard = (NOW - 3_789) as u32;
+        assert_eq!(advert_age(heard, NOW + 59), advert_age(heard, NOW));
+        assert_eq!(advert_age(heard, NOW + 60), "1h5m ago");
     }
 
     #[test]
