@@ -497,7 +497,7 @@ async fn add_contact(mc: &MeshCore, contact: Contact) -> Result<Outcome, String>
     commands
         .add_contact(&contact)
         .await
-        .map_err(|e| format!("Add contact: {}", e))?;
+        .map_err(add_contact_error)?;
     let contacts = commands
         .get_contacts(0)
         .await
@@ -506,6 +506,19 @@ async fn add_contact(mc: &MeshCore, contact: Contact) -> Result<Outcome, String>
         name: contact.adv_name,
         contacts,
     })
+}
+
+/// The firmware's ERR_CODE_TABLE_FULL (companion_radio/MyMesh.cpp), as meshcore-rs reports it
+const TABLE_FULL: &str = "code 3";
+
+/// Why the radio didn't add a contact; a full table is the one reason to spell out
+fn add_contact_error(e: meshcore_rs::Error) -> String {
+    match e {
+        meshcore_rs::Error::Device(code) if code == TABLE_FULL => {
+            "Add contact: the radio's contact table is full".to_string()
+        }
+        e => format!("Add contact: {}", e),
+    }
 }
 
 /// Remove a contact, then reload the contact list without it
@@ -947,6 +960,18 @@ mod tests {
         }));
         assert_eq!(last_message(&app), "Added contact Bob");
         assert_eq!(app.contacts.len(), 1);
+    }
+
+    #[test]
+    fn a_full_contact_table_is_spelled_out() {
+        assert_eq!(
+            add_contact_error(meshcore_rs::Error::device(TABLE_FULL)),
+            "Add contact: the radio's contact table is full"
+        );
+        assert_eq!(
+            add_contact_error(meshcore_rs::Error::device("code 6")),
+            "Add contact: Device error: code 6"
+        );
     }
 
     fn app_with_bob_and_bobby() -> App {
