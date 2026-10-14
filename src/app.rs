@@ -37,9 +37,23 @@ pub struct AdvertEntry {
     pub timestamp: String,
     /// The contact's name, or its key prefix in hex when it isn't a contact
     pub name: String,
-    /// The contact a new contact's advert added; None when a known contact
-    /// advertised again, which the radio reports with only its key
+    /// The node a new node's advert described, which the radio didn't store as
+    /// a contact; None when a known contact advertised again, which the radio
+    /// reports with only its key
     pub new_contact: Option<Contact>,
+}
+
+/// A node the radio heard advertise but didn't store as a contact
+#[derive(Clone, Debug)]
+pub struct DiscoveredNode {
+    /// The node as its latest advert described it
+    pub contact: Contact,
+    /// Unix time we last heard its advert
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "nothing shows the discovered list yet")
+    )]
+    pub last_heard: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +133,8 @@ pub struct App {
     pub packets: Vec<PacketLogEntry>,
     /// Adverts heard, oldest first
     pub adverts: Vec<AdvertEntry>,
+    /// Nodes heard that aren't contacts, one per public key, newest first
+    pub discovered: Vec<DiscoveredNode>,
     /// Public key of the contact messages go to; None sends to the active channel
     pub selected_key: Option<[u8; 32]>,
     pub self_info: Option<SelfInfo>,
@@ -146,6 +162,7 @@ impl App {
             fw_channel_map: HashMap::new(),
             packets: Vec::new(),
             adverts: Vec::new(),
+            discovered: Vec::new(),
             selected_key: None,
             self_info: None,
             device_info: None,
@@ -281,6 +298,9 @@ impl App {
         self.push_advert(who, None);
     }
 
+    /// A node the radio heard but didn't store: auto-add is off for its type,
+    /// it's past the hop limit, or the contact table is full (onAdvertRecv,
+    /// BaseChatMesh.cpp)
     fn on_new_contact(&mut self, contact: Contact) {
         let info = format!(
             "{} [{}] @{:.4},{:.4}",
@@ -295,8 +315,16 @@ impl App {
             info,
         );
         self.push_advert(sanitize(&contact.adv_name), Some(contact.clone()));
-        self.contacts.retain(|c| c.prefix() != contact.prefix());
-        self.contacts.push(contact);
+        self.discovered
+            .retain(|d| d.contact.public_key != contact.public_key);
+        self.discovered.insert(
+            0,
+            DiscoveredNode {
+                contact,
+                last_heard: Utc::now().timestamp(),
+            },
+        );
+        self.discovered.truncate(MAX_DISCOVERED);
     }
 
     fn on_ack(&mut self, tag: &[u8; 4]) {
@@ -471,6 +499,7 @@ const MAX_TEXT_LEN: usize = 160;
 const MAX_MESSAGES: usize = 1000;
 const MAX_PACKETS: usize = 100;
 const MAX_ADVERTS: usize = 100;
+const MAX_DISCOVERED: usize = 100;
 
 fn now() -> String {
     Local::now().format("%H:%M:%S").to_string()
@@ -506,7 +535,7 @@ mod tests {
         assert!(!app.apply_radio_event(EventPayload::Time(0)));
         assert_eq!(app.messages.len(), 2);
         assert_eq!(app.packets.len(), 4);
-        assert_eq!(app.contacts.len(), 1);
+        assert_eq!(app.discovered.len(), 1);
     }
 
     #[test]
@@ -604,15 +633,31 @@ mod tests {
     }
 
     #[test]
-    fn new_contact_replaces_existing_contact_with_same_prefix() {
+    fn new_contact_is_discovered_not_added_to_contacts() {
         let mut app = App::new(0);
-        app.contacts.push(contact("Old name", [1; 6]));
-        app.contacts.push(contact("Other", [2; 6]));
+        app.contacts.push(contact("Alice", [2; 6]));
+        app.on_new_contact(contact("Bob", [3; 6]));
+        let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
+        assert_eq!(names, vec!["Alice"]);
+        assert_eq!(app.discovered.len(), 1);
+        assert_eq!(app.discovered[0].contact.adv_name, "Bob");
+        assert!(app.discovered[0].last_heard > 0);
+    }
+
+    #[test]
+    fn discovered_keeps_the_latest_advert_per_key_newest_first() {
+        let mut app = App::new(0);
+        app.on_new_contact(contact("Old name", [1; 6]));
+        app.on_new_contact(contact("Other", [2; 6]));
         let mut updated = contact("New name", [1; 6]);
         updated.path_len = 2;
         app.on_new_contact(updated);
-        let names: Vec<&str> = app.contacts.iter().map(|c| c.adv_name.as_str()).collect();
-        assert_eq!(names, vec!["Other", "New name"]);
+        let names: Vec<&str> = app
+            .discovered
+            .iter()
+            .map(|d| d.contact.adv_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["New name", "Other"]);
         assert_eq!(last_packet(&app).kind, PacketKind::Advert);
         assert_eq!(
             last_packet(&app).route,
@@ -620,6 +665,21 @@ mod tests {
                 count: 2,
                 hash_size: 1
             })
+        );
+    }
+
+    #[test]
+    fn discovered_is_capped_keeping_newest() {
+        let mut app = App::new(0);
+        for i in 0..MAX_DISCOVERED + 5 {
+            let mut node = contact(&format!("n{}", i), [1; 6]);
+            node.public_key[31] = i as u8;
+            app.on_new_contact(node);
+        }
+        assert_eq!(app.discovered.len(), MAX_DISCOVERED);
+        assert_eq!(
+            app.discovered[0].contact.adv_name,
+            format!("n{}", MAX_DISCOVERED + 4)
         );
     }
 
