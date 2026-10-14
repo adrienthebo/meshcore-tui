@@ -251,6 +251,7 @@ fn draw_contact_table(
         theme.contacts_border
     };
     let table = Table::new(rows, widths)
+        .column_spacing(2)
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
