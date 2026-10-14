@@ -1,15 +1,9 @@
-use std::cell::RefCell;
-
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use meshcore_rs::events::Contact;
-use ratatui::{
-    layout::Rect,
-    style::Style,
-    widgets::{List, ListState},
-    Frame,
-};
+use ratatui::{layout::Rect, Frame};
 
 use crate::app::App;
+use crate::choices::{Choices, ChoicesKey};
 use crate::popover::Popover;
 use crate::text::sanitize;
 use crate::theme::Theme;
@@ -24,9 +18,6 @@ enum Choice {
 
 /// Every choice, in menu order
 const CHOICES: [Choice; 1] = [Choice::Message];
-
-/// Marks the highlighted choice
-const HIGHLIGHT_SYMBOL: &str = "> ";
 
 impl Choice {
     fn label(self) -> &'static str {
@@ -49,18 +40,14 @@ pub struct ContactMenu {
     /// The contact's public key; the menu draws nothing and chooses nothing
     /// while it isn't in the contact list
     key: [u8; 32],
-    /// The highlighted choice's index in CHOICES
-    cursor: usize,
-    /// Drawing selects the highlighted choice's row
-    list: RefCell<ListState>,
+    choices: Choices<Choice>,
 }
 
 impl ContactMenu {
     pub fn new(key: [u8; 32]) -> Self {
         Self {
             key,
-            cursor: 0,
-            list: RefCell::default(),
+            choices: Choices::new(CHOICES.map(|c| (c.label(), c)).to_vec()),
         }
     }
 
@@ -85,31 +72,20 @@ impl View for ContactMenu {
             sanitize(&contact.adv_name),
             &contact.prefix_hex()[..8]
         );
-        let labels = CHOICES.map(Choice::label);
-        let width = labels.iter().map(|l| l.len()).max().unwrap_or(0) + HIGHLIGHT_SYMBOL.len();
-        let inner = Popover::new(title, width as u16, CHOICES.len() as u16).render(f, area, theme);
-        let list = List::new(labels)
-            .style(Style::default().fg(theme.text))
-            .highlight_symbol(HIGHLIGHT_SYMBOL)
-            .highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg));
-        let mut state = self.list.borrow_mut();
-        state.select(Some(self.cursor));
-        f.render_stateful_widget(list, inner, &mut state);
+        let popover = Popover::new(title, self.choices.width(), self.choices.height());
+        let inner = popover.render(f, area, theme);
+        self.choices.draw(f, inner, theme);
     }
 
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
-        match key.code {
-            KeyCode::Up => self.cursor = self.cursor.saturating_sub(1),
-            KeyCode::Down => self.cursor = (self.cursor + 1).min(CHOICES.len() - 1),
-            KeyCode::Enter => {
-                return match self.contact(app) {
-                    Some(contact) => KeyResult::Action(CHOICES[self.cursor].action(contact)),
-                    None => KeyResult::Ignored,
-                };
-            }
-            _ => return KeyResult::Ignored,
+        match self.choices.handle_key(key) {
+            ChoicesKey::Ignored => KeyResult::Ignored,
+            ChoicesKey::Handled => KeyResult::Handled,
+            ChoicesKey::Chosen(choice) => match self.contact(app) {
+                Some(contact) => KeyResult::Action(choice.action(contact)),
+                None => KeyResult::Ignored,
+            },
         }
-        KeyResult::Handled
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
@@ -121,7 +97,7 @@ impl View for ContactMenu {
 mod tests {
     use super::*;
     use crate::test_support::*;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn press(menu: &mut ContactMenu, app: &App, code: KeyCode) -> KeyResult {
         menu.handle_key(KeyEvent::new(code, KeyModifiers::NONE), app)
@@ -139,15 +115,11 @@ mod tests {
     }
 
     #[test]
-    fn arrows_choose_within_bounds() {
+    fn arrows_are_handled() {
         let app = app_with_contacts(1);
         let mut menu = ContactMenu::new(app.contacts[0].public_key);
         assert_eq!(press(&mut menu, &app, KeyCode::Up), KeyResult::Handled);
-        assert_eq!(menu.cursor, 0);
-        for _ in 0..5 {
-            press(&mut menu, &app, KeyCode::Down);
-        }
-        assert_eq!(menu.cursor, CHOICES.len() - 1);
+        assert_eq!(press(&mut menu, &app, KeyCode::Down), KeyResult::Handled);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod app;
+mod choices;
 mod commands;
 mod contact_menu;
 mod contacts_tab;
