@@ -165,7 +165,10 @@ fn advert_age(last_advert: u32, now: i64) -> String {
         return "—".to_string();
     }
     let minutes = now / 60 - last_advert as i64 / 60;
-    let size = format_duration((minutes.unsigned_abs() * 60).try_into().unwrap_or(u32::MAX));
+    let size = format_duration(
+        (minutes.unsigned_abs() * 60).try_into().unwrap_or(u32::MAX),
+        2,
+    );
     match minutes {
         0 => "<1m ago".to_string(),
         ..0 => format!("-{}", size),
@@ -248,6 +251,7 @@ fn draw_contact_table(
         theme.contacts_border
     };
     let table = Table::new(rows, widths)
+        .column_spacing(2)
         .header(header)
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
@@ -520,6 +524,14 @@ mod tests {
         assert_eq!(advert_age((NOW + 30) as u32, NOW), "<1m ago");
         assert_eq!(advert_age((NOW + 60) as u32, NOW), "-1m");
         assert_eq!(advert_age((NOW + 3 * 86_400) as u32, NOW), "-3d");
+    }
+
+    #[test]
+    fn long_advert_ages_fit_their_column() {
+        // A sender whose clock was never set
+        let age = advert_age(1, NOW);
+        assert_eq!(age, "2962w3d ago");
+        assert!(age.len() <= 11);
     }
 
     #[test]

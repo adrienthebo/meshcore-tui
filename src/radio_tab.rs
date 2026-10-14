@@ -11,7 +11,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::stats::{ClockReading, HISTORY_SECS};
-use crate::text::{format_duration, sanitize};
+use crate::text::{format_duration, sanitize, EVERY_UNIT};
 use crate::theme::Theme;
 use crate::ui::{noise_quality, panel, quality_span, rssi_quality, snr_quality};
 use crate::view::{KeyResult, View};
@@ -163,7 +163,7 @@ fn duty_bar(fraction: f64, width: usize) -> String {
 fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let uptime = app.diagnostics.core.map(|core| core.uptime_secs);
     let title = match uptime {
-        Some(secs) => format!(" Airtime (up {}) ", format_duration(secs)),
+        Some(secs) => format!(" Airtime (up {}) ", format_duration(secs, 3)),
         None => " Airtime ".to_string(),
     };
     let Some(stats) = app.radio_stats.latest else {
@@ -183,14 +183,14 @@ fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         theme,
         "TX ",
         3,
-        value(theme, format_duration(stats.tx_air_secs)),
+        value(theme, format_duration(stats.tx_air_secs, 3)),
     )
     .into_iter()
     .chain(reading(
         theme,
         "  RX ",
         5,
-        value(theme, format_duration(stats.rx_air_secs)),
+        value(theme, format_duration(stats.rx_air_secs, 3)),
     ));
     let rows = vec![
         Line::from_iter(reading(
@@ -251,7 +251,10 @@ fn draw_packets(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 /// How far the radio's clock is from the host's, e.g. "5s behind"
 fn clock_drift(clock: ClockReading) -> String {
     let drift = clock.radio as i64 - clock.host;
-    let size = format_duration(drift.unsigned_abs().try_into().unwrap_or(u32::MAX));
+    let size = format_duration(
+        drift.unsigned_abs().try_into().unwrap_or(u32::MAX),
+        EVERY_UNIT,
+    );
     match drift {
         0 => "in sync".to_string(),
         d if d > 0 => format!("{} ahead", size),

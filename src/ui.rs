@@ -443,8 +443,8 @@ pub fn draw_radio(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Span::styled(
             format!(
                 "   Air TX {} RX {}",
-                format_duration(latest.tx_air_secs),
-                format_duration(latest.rx_air_secs)
+                format_duration(latest.tx_air_secs, 3),
+                format_duration(latest.rx_air_secs, 3)
             ),
             muted,
         ),
