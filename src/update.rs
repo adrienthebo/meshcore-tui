@@ -47,6 +47,8 @@ pub enum Action {
     SelectContact([u8; 32]),
     /// Address messages to the contact with this public key and show the Overview to write them
     MessageContact([u8; 32]),
+    /// Add the discovered node with this public key as a contact
+    AddDiscovered([u8; 32]),
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
@@ -91,6 +93,7 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
                 app.err("That contact is no longer in the list");
             }
         }
+        Action::AddDiscovered(key) => return app.add_discovered(&key).into_iter().collect(),
     }
     Vec::new()
 }
@@ -238,5 +241,17 @@ mod tests {
         assert_eq!(app.selected_key, None);
         assert_eq!(ui.active, 1);
         assert_eq!(last_message(&app), "That contact is no longer in the list");
+    }
+
+    #[test]
+    fn add_discovered_asks_the_radio_to_add_it() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        app.connected = true;
+        let bob = contact("Bob", [0xd4; 6]);
+        app.apply_radio_event(EventPayload::Contact(bob.clone()));
+        assert!(matches!(
+            apply_action(&mut app, &mut ui, Action::AddDiscovered(bob.public_key))[..],
+            [Effect::Radio(Command::AddContact(_))]
+        ));
     }
 }

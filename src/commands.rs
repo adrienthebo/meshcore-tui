@@ -720,6 +720,26 @@ impl App {
                 text: line.to_string(),
             }
         };
+        self.when_connected(effect)
+    }
+
+    /// Add a discovered node as a contact, as its latest advert described it
+    pub fn add_discovered(&mut self, key: &[u8; 32]) -> Option<Effect> {
+        let Some(node) = self
+            .discovered
+            .iter()
+            .find(|d| d.contact.public_key == *key)
+        else {
+            self.err("That node is no longer in the discovered list");
+            return None;
+        };
+        let cmd = Command::AddContact(ContactToAdd(node.contact.clone()));
+        let effect = Effect::Radio(self.apply_local(cmd)?);
+        self.when_connected(effect)
+    }
+
+    /// The effect, or None and an error when there's no radio to carry it out
+    fn when_connected(&mut self, effect: Effect) -> Option<Effect> {
         if !self.connected {
             self.err("Not connected");
             return None;
@@ -741,7 +761,7 @@ mod tests {
     use super::*;
     use crate::app::{MsgType, PacketKind};
     use crate::test_support::*;
-    use meshcore_rs::events::SelfInfo;
+    use meshcore_rs::events::{EventPayload, SelfInfo};
 
     // ── Slash commands ───────────────────────────────────────────────────────
 
@@ -1291,6 +1311,55 @@ mod tests {
         assert_eq!(last_message(&app), "Not connected");
         assert!(app.submit("/public").is_none());
         assert_eq!(last_message(&app), "Switched to CH#0");
+    }
+
+    // ── Discovered nodes ─────────────────────────────────────────────────────
+
+    fn app_with_discovered_ridge() -> (App, Contact) {
+        let mut app = connected_app();
+        let mut ridge = contact("Ridge", [0xe5; 6]);
+        ridge.contact_type = 2;
+        ridge.path_len = 3;
+        ridge.adv_lat = 51_900_000;
+        app.apply_radio_event(EventPayload::Contact(ridge.clone()));
+        (app, ridge)
+    }
+
+    #[test]
+    fn adding_a_discovered_node_sends_its_advert_to_the_radio() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        let effect = app.add_discovered(&ridge.public_key);
+        assert!(matches!(
+            effect,
+            Some(Effect::Radio(Command::AddContact(ref added)))
+                if *added == ContactToAdd(ridge.clone())
+        ));
+    }
+
+    #[test]
+    fn adding_a_discovered_node_that_is_already_a_contact_is_refused() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        app.contacts.push(ridge.clone());
+        assert!(app.add_discovered(&ridge.public_key).is_none());
+        assert_eq!(last_message(&app), "That key is already a contact: Ridge");
+    }
+
+    #[test]
+    fn adding_a_node_no_longer_discovered_is_refused() {
+        let mut app = connected_app();
+        assert!(app.add_discovered(&[9; 32]).is_none());
+        assert_eq!(
+            last_message(&app),
+            "That node is no longer in the discovered list"
+        );
+    }
+
+    #[test]
+    fn adding_a_discovered_node_while_offline_is_refused() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        app.connected = false;
+        assert!(app.add_discovered(&ridge.public_key).is_none());
+        assert_eq!(last_message(&app), "Not connected");
     }
 
     // ── Radio outcomes ───────────────────────────────────────────────────────

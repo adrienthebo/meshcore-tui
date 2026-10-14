@@ -49,10 +49,6 @@ pub struct DiscoveredNode {
     /// The node as its latest advert described it
     pub contact: Contact,
     /// Unix time we last heard its advert
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "nothing shows the discovered list yet")
-    )]
     pub last_heard: i64,
 }
 

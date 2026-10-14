@@ -11,14 +11,15 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{AdvertEntry, App, Route};
+use crate::app::{AdvertEntry, App, DiscoveredNode, Route};
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
 use crate::update::Action;
 use crate::view::{KeyResult, View};
 
-/// Every contact the radio knows, newest advert first, above the adverts heard
+/// Every contact the radio knows, newest advert first, above the nodes heard
+/// that aren't contacts and the adverts heard
 #[derive(Debug, Default)]
 pub struct ContactsTab {
     focus: Section,
@@ -28,6 +29,12 @@ pub struct ContactsTab {
     /// How far the table has scrolled; drawing selects the browsed contact's
     /// row and scrolls to keep it in view
     table: RefCell<TableState>,
+    /// The browsed discovered node's public key; no row is browsed while it
+    /// isn't in the discovered list
+    discovered_browsed: Option<[u8; 32]>,
+    /// How far the discovered table has scrolled; drawing selects the browsed
+    /// node's row and scrolls to keep it in view
+    discovered_table: RefCell<TableState>,
     /// The seq of the advert at the top of the scrolled adverts; None follows
     /// the newest
     adverts_top: Option<u64>,
@@ -38,6 +45,7 @@ pub struct ContactsTab {
 enum Section {
     #[default]
     Table,
+    Discovered,
     Adverts,
 }
 
@@ -50,17 +58,27 @@ impl View for ContactsTab {
         draw_contacts_tab(f, app, self, theme, Utc::now().timestamp(), area);
     }
 
-    /// Tab moves focus between the table and the adverts; ↑↓ browse contacts or
-    /// scroll adverts, and Enter messages the browsed contact
+    /// Tab moves focus between the table, the discovered nodes and the adverts;
+    /// ↑↓ browse contacts or discovered nodes or scroll adverts, Enter messages
+    /// the browsed contact and `a` adds the browsed discovered node
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match (key.code, &self.focus) {
-            (KeyCode::Tab, Section::Table) => self.focus = Section::Adverts,
+            (KeyCode::Tab, Section::Table) => self.focus = Section::Discovered,
+            (KeyCode::Tab, Section::Discovered) => self.focus = Section::Adverts,
             (KeyCode::Tab, Section::Adverts) => self.focus = Section::Table,
             (KeyCode::Up, Section::Table) => self.browse(app, Step::Up),
             (KeyCode::Down, Section::Table) => self.browse(app, Step::Down),
             (KeyCode::Enter, Section::Table) => {
                 return match self.browsed_contact(app) {
                     Some(contact) => KeyResult::Action(Action::MessageContact(contact.public_key)),
+                    None => KeyResult::Ignored,
+                };
+            }
+            (KeyCode::Up, Section::Discovered) => self.browse_discovered(app, Step::Up),
+            (KeyCode::Down, Section::Discovered) => self.browse_discovered(app, Step::Down),
+            (KeyCode::Char('a'), Section::Discovered) => {
+                return match self.browsed_discovered(app) {
+                    Some(node) => KeyResult::Action(Action::AddDiscovered(node.contact.public_key)),
                     None => KeyResult::Ignored,
                 };
             }
@@ -74,6 +92,7 @@ impl View for ContactsTab {
     fn key_hints(&self) -> Vec<&'static str> {
         match self.focus {
             Section::Table => vec!["↑↓=browse", "Enter=message", "Tab=panel"],
+            Section::Discovered => vec!["↑↓=browse", "a=add", "Tab=panel"],
             Section::Adverts => vec!["↑↓=scroll", "Tab=panel"],
         }
     }
@@ -135,6 +154,30 @@ impl ContactsTab {
             .rev()
             .position(|a| a.seq == top)
             .unwrap_or(adverts.len().saturating_sub(1))
+    }
+
+    /// Move the browsed discovered node, starting from the first when none is browsed
+    fn browse_discovered(&mut self, app: &App, step: Step) {
+        let Some(last) = app.discovered.len().checked_sub(1) else {
+            return;
+        };
+        let row = match (self.discovered_row(&app.discovered), step) {
+            (None, _) => 0,
+            (Some(row), Step::Up) => row.saturating_sub(1),
+            (Some(row), Step::Down) => (row + 1).min(last),
+        };
+        self.discovered_browsed = Some(app.discovered[row].contact.public_key);
+    }
+
+    /// The browsed discovered node's row, newest first
+    fn discovered_row(&self, discovered: &[DiscoveredNode]) -> Option<usize> {
+        let key = self.discovered_browsed?;
+        discovered.iter().position(|d| d.contact.public_key == key)
+    }
+
+    fn browsed_discovered<'a>(&self, app: &'a App) -> Option<&'a DiscoveredNode> {
+        let key = self.discovered_browsed?;
+        app.discovered.iter().find(|d| d.contact.public_key == key)
     }
 }
 
@@ -203,11 +246,48 @@ fn draw_contacts_tab(
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(10)])
+        .constraints([
+            Constraint::Min(6),
+            Constraint::Length(10),
+            Constraint::Length(10),
+        ])
         .split(area);
     draw_contact_table(f, app, tab, theme, now, chunks[0]);
-    draw_adverts(f, &app.adverts, tab, theme, chunks[1]);
+    draw_discovered(f, &app.discovered, tab, theme, now, chunks[1]);
+    draw_adverts(f, &app.adverts, tab, theme, chunks[2]);
 }
+
+/// A contact's table row; `heard` is when it advertised, as unix time
+fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
+    Row::new([
+        sanitize(&c.adv_name),
+        contact_type_label(c.contact_type).to_string(),
+        c.prefix_hex()[..8].to_string(),
+        advert_age(heard, now),
+        hops_label(c.path_len),
+        position_label(c),
+    ])
+}
+
+/// The column titles above contact rows, naming the age column
+fn contact_header(theme: &Theme, age: &'static str) -> Row<'static> {
+    Row::new(["Name", "Type", "Key", age, "Hops", "Position"]).style(
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+const CONTACT_WIDTHS: [Constraint; 6] = [
+    Constraint::Fill(1),
+    Constraint::Length(9),
+    Constraint::Length(8),
+    Constraint::Length(11),
+    Constraint::Length(5),
+    Constraint::Length(19),
+];
+/// Columns between contact table cells, shared so both tables line up
+const CONTACT_SPACING: u16 = 2;
 
 fn draw_contact_table(
     f: &mut Frame,
@@ -221,38 +301,16 @@ fn draw_contact_table(
     let browsed_row = tab.browsed_row(&contacts);
     let rows: Vec<Row> = contacts
         .into_iter()
-        .map(|c| {
-            Row::new([
-                sanitize(&c.adv_name),
-                contact_type_label(c.contact_type).to_string(),
-                c.prefix_hex()[..8].to_string(),
-                advert_age(c.last_advert, now),
-                hops_label(c.path_len),
-                position_label(c),
-            ])
-        })
+        .map(|c| contact_row(c, c.last_advert, now))
         .collect();
-    let header = Row::new(["Name", "Type", "Key", "Last advert", "Hops", "Position"]).style(
-        Style::default()
-            .fg(theme.muted)
-            .add_modifier(Modifier::BOLD),
-    );
-    let widths = [
-        Constraint::Fill(1),
-        Constraint::Length(9),
-        Constraint::Length(8),
-        Constraint::Length(11),
-        Constraint::Length(5),
-        Constraint::Length(19),
-    ];
     let border = if tab.focus == Section::Table {
         theme.focus
     } else {
         theme.contacts_border
     };
-    let table = Table::new(rows, widths)
-        .column_spacing(2)
-        .header(header)
+    let table = Table::new(rows, CONTACT_WIDTHS)
+        .column_spacing(CONTACT_SPACING)
+        .header(contact_header(theme, "Last advert"))
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
         .block(panel(
@@ -262,6 +320,40 @@ fn draw_contact_table(
         ));
     let mut state = tab.table.borrow_mut();
     state.select(browsed_row);
+    f.render_stateful_widget(table, area, &mut state);
+}
+
+/// Nodes heard that aren't contacts, newest first, dimmed; each one's age is
+/// when we heard it, by our clock
+fn draw_discovered(
+    f: &mut Frame,
+    discovered: &[DiscoveredNode],
+    tab: &ContactsTab,
+    theme: &Theme,
+    now: i64,
+    area: Rect,
+) {
+    let rows: Vec<Row> = discovered
+        .iter()
+        .map(|d| contact_row(&d.contact, u32::try_from(d.last_heard).unwrap_or(0), now))
+        .collect();
+    let border = if tab.focus == Section::Discovered {
+        theme.focus
+    } else {
+        theme.contacts_border
+    };
+    let table = Table::new(rows, CONTACT_WIDTHS)
+        .column_spacing(CONTACT_SPACING)
+        .header(contact_header(theme, "Heard"))
+        .style(Style::default().fg(theme.muted))
+        .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
+        .block(panel(
+            theme,
+            format!(" Discovered ({}) ", discovered.len()),
+            border,
+        ));
+    let mut state = tab.discovered_table.borrow_mut();
+    state.select(tab.discovered_row(discovered));
     f.render_stateful_widget(table, area, &mut state);
 }
 
@@ -358,16 +450,17 @@ mod tests {
         for advert in &mut app.adverts {
             advert.timestamp = "12:34:56".to_string();
         }
+        app.discovered[0].last_heard = NOW - 120;
         app
     }
 
     #[test]
-    fn contacts_and_adverts_newest_first() {
+    fn contacts_discovered_and_adverts_newest_first() {
         insta::assert_snapshot!(render(
             &app_with_heard_contacts(),
             &ContactsTab::default(),
             80,
-            16
+            26
         ));
     }
 
@@ -462,6 +555,7 @@ mod tests {
         let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
         assert_eq!(tab.key_hints(), ["↑↓=browse", "Enter=message", "Tab=panel"]);
         press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.key_hints(), ["↑↓=scroll", "Tab=panel"]);
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Down);
@@ -493,6 +587,7 @@ mod tests {
     fn scrolled_adverts_stay_put_as_new_ones_arrive() {
         let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
         press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Tab);
         press(&mut tab, &app, KeyCode::Down);
         let shown = shown_adverts(&tab, &app);
         app.apply_radio_event(EventPayload::Contact(contact("Carol", [0xe5; 6])));
@@ -508,9 +603,105 @@ mod tests {
     fn scrolled_adverts_stop_at_the_oldest_left_when_theirs_is_dropped() {
         let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
         press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Tab);
         press(&mut tab, &app, KeyCode::Down);
         app.adverts.remove(0);
         assert_eq!(tab.adverts_row(&app.adverts), app.adverts.len() - 1);
+    }
+
+    /// An app with the given discovered nodes, newest first
+    fn app_with_discovered(names: &[&str]) -> App {
+        let mut app = App::new(0);
+        for (i, name) in names.iter().enumerate().rev() {
+            app.apply_radio_event(EventPayload::Contact(contact(name, [0xe0 + i as u8; 6])));
+        }
+        app
+    }
+
+    fn browsed_discovered_name(tab: &ContactsTab, app: &App) -> Option<String> {
+        tab.browsed_discovered(app)
+            .map(|d| d.contact.adv_name.clone())
+    }
+
+    #[test]
+    fn tab_moves_focus_to_the_discovered_nodes_which_browse_within_bounds() {
+        let (mut tab, app) = (
+            ContactsTab::default(),
+            app_with_discovered(&["Bob", "Ridge"]),
+        );
+        press(&mut tab, &app, KeyCode::Tab);
+        assert_eq!(tab.focus, Section::Discovered);
+        assert_eq!(tab.key_hints(), ["↑↓=browse", "a=add", "Tab=panel"]);
+        assert_eq!(browsed_discovered_name(&tab, &app), None);
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(browsed_discovered_name(&tab, &app).as_deref(), Some("Bob"));
+        for _ in 0..5 {
+            press(&mut tab, &app, KeyCode::Down);
+        }
+        assert_eq!(
+            browsed_discovered_name(&tab, &app).as_deref(),
+            Some("Ridge")
+        );
+        press(&mut tab, &app, KeyCode::Up);
+        assert_eq!(browsed_discovered_name(&tab, &app).as_deref(), Some("Bob"));
+        // The contact table keeps its own browsed row
+        assert_eq!(tab.table.borrow().selected(), None);
+    }
+
+    #[test]
+    fn a_adds_the_browsed_discovered_node() {
+        let (mut tab, app) = (
+            ContactsTab::default(),
+            app_with_discovered(&["Bob", "Ridge"]),
+        );
+        press(&mut tab, &app, KeyCode::Tab);
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Char('a')),
+            KeyResult::Ignored
+        );
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Char('a')),
+            KeyResult::Action(Action::AddDiscovered(app.discovered[1].contact.public_key))
+        );
+        // Enter doesn't add
+        assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+    }
+
+    #[test]
+    fn a_adds_nothing_outside_the_discovered_nodes() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_discovered(&["Bob"]));
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Char('a')),
+            KeyResult::Ignored
+        );
+    }
+
+    #[test]
+    fn the_browsed_discovered_row_follows_its_node_as_others_are_heard() {
+        let (mut tab, mut app) = (
+            ContactsTab::default(),
+            app_with_discovered(&["Bob", "Ridge"]),
+        );
+        press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Down);
+        render(&app, &tab, 80, 26);
+        assert_eq!(tab.discovered_table.borrow().selected(), Some(0));
+        app.apply_radio_event(EventPayload::Contact(contact("Carol", [0xf6; 6])));
+        render(&app, &tab, 80, 26);
+        assert_eq!(browsed_discovered_name(&tab, &app).as_deref(), Some("Bob"));
+        assert_eq!(tab.discovered_table.borrow().selected(), Some(1));
+    }
+
+    #[test]
+    fn an_added_node_stays_discovered() {
+        let (mut tab, mut app) = (ContactsTab::default(), app_with_discovered(&["Bob"]));
+        press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Down);
+        let bob = app.discovered[0].contact.clone();
+        app.set_contacts(vec![bob]);
+        assert_eq!(browsed_discovered_name(&tab, &app).as_deref(), Some("Bob"));
     }
 
     #[test]
