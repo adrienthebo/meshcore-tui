@@ -146,11 +146,7 @@ fn find_command(name: &str) -> Option<&'static CommandSpec> {
 pub enum Command {
     Help,
     Contacts,
-    AddContact {
-        name: String,
-        public_key: PublicKey,
-        contact_type: u8,
-    },
+    AddContact(ContactToAdd),
     /// A biz card: a node's signed advert packet
     ImportContact(Vec<u8>),
     /// A contact's name or public key, resolved to a contact before it goes to the radio
@@ -174,6 +170,39 @@ pub enum Command {
     Name(String),
     Info,
     Quit,
+}
+
+/// A contact for the radio to store, with every field the radio keeps
+#[derive(Debug, Clone)]
+pub struct ContactToAdd(pub Contact);
+
+impl ContactToAdd {
+    /// A contact with no route, advert or position
+    fn named(name: String, public_key: PublicKey, contact_type: u8) -> Self {
+        Self(Contact {
+            public_key,
+            contact_type,
+            adv_name: name,
+            ..Default::default()
+        })
+    }
+}
+
+/// meshcore-rs's Contact doesn't implement PartialEq
+impl PartialEq for ContactToAdd {
+    fn eq(&self, other: &Self) -> bool {
+        let (a, b) = (&self.0, &other.0);
+        a.public_key == b.public_key
+            && a.contact_type == b.contact_type
+            && a.flags == b.flags
+            && a.path_len == b.path_len
+            && a.out_path == b.out_path
+            && a.adv_name == b.adv_name
+            && a.last_advert == b.last_advert
+            && a.adv_lat == b.adv_lat
+            && a.adv_lon == b.adv_lon
+            && a.last_modification_timestamp == b.last_modification_timestamp
+    }
 }
 
 fn parse_channel_index(arg: &str, spec: &CommandSpec) -> Result<u8, String> {
@@ -225,11 +254,11 @@ fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     if name.is_empty() {
         return Err(spec.usage());
     }
-    Ok(Command::AddContact {
-        name: name.to_string(),
-        public_key: parse_public_key(key)?,
-        contact_type: COMPANION,
-    })
+    Ok(Command::AddContact(ContactToAdd::named(
+        name.to_string(),
+        parse_public_key(key)?,
+        COMPANION,
+    )))
 }
 
 /// A contact link's query: name, public_key and an optional numeric type
@@ -251,11 +280,9 @@ fn parse_contact_link(query: &str) -> Result<Command, String> {
         }
     }
     match (name, key) {
-        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact {
-            name,
-            public_key,
-            contact_type,
-        }),
+        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact(
+            ContactToAdd::named(name, public_key, contact_type),
+        )),
         _ => Err("Contact link needs a name and public_key".to_string()),
     }
 }
@@ -372,11 +399,18 @@ impl App {
                 }
             }
             Command::Quit => self.should_quit = true,
-            // Adding a key that's already a contact would overwrite its name and type and reset its route
-            Command::AddContact { public_key, .. }
-                if self.contacts.iter().any(|c| c.public_key == public_key) =>
+            // Adding a key that's already a contact would overwrite what the radio stores for it,
+            // such as its name, type and route
+            Command::AddContact(ContactToAdd(contact))
+                if self
+                    .contacts
+                    .iter()
+                    .any(|c| c.public_key == contact.public_key) =>
             {
-                let existing = self.contacts.iter().find(|c| c.public_key == public_key);
+                let existing = self
+                    .contacts
+                    .iter()
+                    .find(|c| c.public_key == contact.public_key);
                 let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
                 self.err(&format!("That key is already a contact: {}", name));
             }
@@ -457,19 +491,8 @@ async fn set_channel(
     Ok(secret)
 }
 
-/// Add a contact with no route, then reload the contact list to show it
-async fn add_contact(
-    mc: &MeshCore,
-    name: String,
-    public_key: PublicKey,
-    contact_type: u8,
-) -> Result<Outcome, String> {
-    let contact = Contact {
-        public_key,
-        contact_type,
-        adv_name: name.clone(),
-        ..Default::default()
-    };
+/// Add a contact, then reload the contact list to show it
+async fn add_contact(mc: &MeshCore, contact: Contact) -> Result<Outcome, String> {
     let commands = mc.commands().lock().await;
     commands
         .add_contact(&contact)
@@ -479,7 +502,10 @@ async fn add_contact(
         .get_contacts(0)
         .await
         .map_err(|e| format!("Contacts: {}", e))?;
-    Ok(Outcome::ContactAdded { name, contacts })
+    Ok(Outcome::ContactAdded {
+        name: contact.adv_name,
+        contacts,
+    })
 }
 
 /// Remove a contact, then reload the contact list without it
@@ -553,11 +579,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             .await
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
-        Command::AddContact {
-            name,
-            public_key,
-            contact_type,
-        } => add_contact(mc, name, public_key, contact_type).await,
+        Command::AddContact(ContactToAdd(contact)) => add_contact(mc, contact).await,
         Command::ImportContact(card) => mc
             .commands()
             .lock()
@@ -816,11 +838,7 @@ mod tests {
     }
 
     fn add_contact(name: &str, contact_type: u8) -> Command {
-        Command::AddContact {
-            name: name.to_string(),
-            public_key: key(),
-            contact_type,
-        }
+        Command::AddContact(ContactToAdd::named(name.to_string(), key(), contact_type))
     }
 
     #[test]
