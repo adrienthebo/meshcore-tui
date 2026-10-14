@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn contacts_with_selection_and_truncation() {
         let mut app = connected_app();
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(
             f,
             &app,
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn input_shows_text_and_send_target() {
         let mut app = connected_app();
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         let mut input = InputLine::default();
         for c in "hello".chars() {
             input.insert(c);
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn input_title_counts_bytes_left_near_the_limit() {
         let mut app = connected_app();
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         let mut input = InputLine::default();
         for c in "x".repeat(140).chars() {
             input.insert(c);

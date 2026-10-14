@@ -118,17 +118,17 @@ impl View for ContactList {
     }
 
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
-        match key.code {
-            KeyCode::Up => {
-                let idx = app.selected_index().map_or(0, |s| s.saturating_sub(1));
-                KeyResult::Action(Action::SelectContact(idx))
-            }
+        let idx = match key.code {
+            KeyCode::Up => app.selected_index().map_or(0, |s| s.saturating_sub(1)),
             KeyCode::Down => {
                 let last = app.contacts.len().saturating_sub(1);
-                let idx = app.selected_index().map_or(0, |s| (s + 1).min(last));
-                KeyResult::Action(Action::SelectContact(idx))
+                app.selected_index().map_or(0, |s| (s + 1).min(last))
             }
-            _ => KeyResult::Ignored,
+            _ => return KeyResult::Ignored,
+        };
+        match app.contacts.get(idx) {
+            Some(contact) => KeyResult::Action(Action::SelectContact(contact.public_key)),
+            None => KeyResult::Ignored,
         }
     }
 
@@ -243,10 +243,7 @@ mod tests {
             KeyResult::Ignored
         );
         overview.focus = Panel::Contacts;
-        assert_eq!(
-            press(&mut overview, &app, KeyCode::Down),
-            KeyResult::Action(Action::SelectContact(0))
-        );
+        assert_eq!(press(&mut overview, &app, KeyCode::Down), select(&app, 0));
     }
 
     #[test]
@@ -261,36 +258,37 @@ mod tests {
 
     // ── ContactList ──────────────────────────────────────────────────────────
 
+    /// The action that selects the contact at `idx` in the contact list
+    fn select(app: &App, idx: usize) -> KeyResult {
+        KeyResult::Action(Action::SelectContact(app.contacts[idx].public_key))
+    }
+
     #[test]
     fn contact_arrows_move_the_selection_within_the_list() {
         let mut app = app_with_contacts(3);
         let mut list = ContactList;
-        app.select_contact(2);
-        assert_eq!(
-            press(&mut list, &app, KeyCode::Down),
-            KeyResult::Action(Action::SelectContact(2))
-        );
-        assert_eq!(
-            press(&mut list, &app, KeyCode::Up),
-            KeyResult::Action(Action::SelectContact(1))
-        );
-        app.select_contact(0);
-        assert_eq!(
-            press(&mut list, &app, KeyCode::Up),
-            KeyResult::Action(Action::SelectContact(0))
-        );
+        app.select_contact(app.contacts[2].public_key);
+        assert_eq!(press(&mut list, &app, KeyCode::Down), select(&app, 2));
+        assert_eq!(press(&mut list, &app, KeyCode::Up), select(&app, 1));
+        app.select_contact(app.contacts[0].public_key);
+        assert_eq!(press(&mut list, &app, KeyCode::Up), select(&app, 0));
     }
 
     #[test]
     fn contact_arrows_with_no_selection_select_the_first() {
         let app = app_with_contacts(2);
-        assert_eq!(
-            press(&mut ContactList, &app, KeyCode::Up),
-            KeyResult::Action(Action::SelectContact(0))
-        );
+        assert_eq!(press(&mut ContactList, &app, KeyCode::Up), select(&app, 0));
         assert_eq!(
             press(&mut ContactList, &app, KeyCode::Down),
-            KeyResult::Action(Action::SelectContact(0))
+            select(&app, 0)
+        );
+    }
+
+    #[test]
+    fn contact_arrows_with_no_contacts_select_nothing() {
+        assert_eq!(
+            press(&mut ContactList, &App::new(0), KeyCode::Down),
+            KeyResult::Ignored
         );
     }
 

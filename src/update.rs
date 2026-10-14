@@ -43,8 +43,8 @@ pub enum Action {
     Quit,
     /// Send a chat message or run a slash command
     Submit(String),
-    /// Address messages to the contact at this index
-    SelectContact(usize),
+    /// Address messages to the contact with this public key
+    SelectContact([u8; 32]),
     /// Address messages to the contact with this public key and show the Overview to write them
     MessageContact([u8; 32]),
 }
@@ -81,14 +81,14 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
     match action {
         Action::Quit => app.should_quit = true,
         Action::Submit(line) => return app.submit(&line).into_iter().collect(),
-        Action::SelectContact(idx) => app.select_contact(idx),
+        Action::SelectContact(key) => {
+            app.select_contact(key);
+        }
         Action::MessageContact(key) => {
-            match app.contacts.iter().position(|c| c.public_key == key) {
-                Some(idx) => {
-                    app.select_contact(idx);
-                    ui.show_overview();
-                }
-                None => app.err("That contact is no longer in the list"),
+            if app.select_contact(key) {
+                ui.show_overview();
+            } else {
+                app.err("That contact is no longer in the list");
             }
         }
     }
@@ -213,10 +213,11 @@ mod tests {
     #[test]
     fn select_contact_changes_the_selection() {
         let (mut app, mut ui) = (app_with_contacts(2), test_ui());
-        apply_action(&mut app, &mut ui, Action::SelectContact(1));
+        let key = app.contacts[1].public_key;
+        apply_action(&mut app, &mut ui, Action::SelectContact(key));
         assert_eq!(app.selected_index(), Some(1));
-        apply_action(&mut app, &mut ui, Action::SelectContact(5));
-        assert_eq!(app.selected_key, None);
+        apply_action(&mut app, &mut ui, Action::SelectContact([4; 32]));
+        assert_eq!(app.selected_index(), Some(1));
     }
 
     #[test]

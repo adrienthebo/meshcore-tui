@@ -343,10 +343,10 @@ impl App {
                 let found = self
                     .contacts
                     .iter()
-                    .position(|c| c.adv_name.to_lowercase().contains(&needle));
-                if let Some(idx) = found {
-                    let contact_name = sanitize(&self.contacts[idx].adv_name);
-                    self.select_contact(idx);
+                    .find(|c| c.adv_name.to_lowercase().contains(&needle));
+                if let Some(contact) = found {
+                    let (contact_name, key) = (sanitize(&contact.adv_name), contact.public_key);
+                    self.select_contact(key);
                     self.sys(&format!("Now chatting with: {}", contact_name));
                 } else {
                     self.err(&format!("Contact '{}' not found", name));
@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn switch_channel_clears_contact_selection() {
         let mut app = app_with_contacts(1);
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         app.channels.insert(2, channel("Ops"));
         app.apply_local(Command::SwitchChannel(2));
         assert_eq!(app.active_channel, 2);
@@ -1243,7 +1243,7 @@ mod tests {
     #[test]
     fn submit_sends_text_to_the_selected_contact() {
         let mut app = connected_app();
-        app.select_contact(1);
+        app.select_contact(app.contacts[1].public_key);
         let effect = app.submit("hi");
         assert!(
             matches!(effect, Some(Effect::Send { to: Recipient::Contact(ref c), ref text })
@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn contacts_outcome_keeps_the_dm_target_when_the_order_changes() {
         let mut app = connected_app();
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         let reordered = vec![app.contacts[1].clone(), app.contacts[0].clone()];
         app.apply_outcome(Ok(Outcome::Contacts(reordered)));
         assert!(

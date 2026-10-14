@@ -365,9 +365,14 @@ impl App {
         self.contacts.iter().position(|c| c.public_key == key)
     }
 
-    /// Select the contact at `idx` in the contact list; out of range selects nothing
-    pub fn select_contact(&mut self, idx: usize) {
-        self.selected_key = self.contacts.get(idx).map(|c| c.public_key);
+    /// Select the contact with this public key; false, changing nothing, when
+    /// it isn't in the contact list
+    pub fn select_contact(&mut self, key: [u8; 32]) -> bool {
+        let known = self.contacts.iter().any(|c| c.public_key == key);
+        if known {
+            self.selected_key = Some(key);
+        }
+        known
     }
 
     /// Replace the contact list, keeping the selection on the same contact
@@ -824,7 +829,7 @@ mod tests {
     fn target_label_prefers_selected_contact() {
         let mut app = App::new(0);
         app.contacts.push(contact("Bob", [9; 6]));
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         assert_eq!(app.target_label(), "Bob");
     }
 
@@ -843,17 +848,20 @@ mod tests {
     }
 
     #[test]
-    fn select_contact_out_of_range_selects_nothing() {
+    fn select_contact_with_an_unknown_key_changes_nothing() {
         let mut app = app_with_contacts(1);
-        app.select_contact(0);
-        app.select_contact(1);
+        assert!(!app.select_contact([4; 32]));
         assert_eq!(app.selected_key, None);
+        let key = app.contacts[0].public_key;
+        assert!(app.select_contact(key));
+        assert!(!app.select_contact([4; 32]));
+        assert_eq!(app.selected_key, Some(key));
     }
 
     #[test]
     fn contacts_reload_keeps_selection_on_the_same_contact() {
         let mut app = app_with_contacts(2);
-        app.select_contact(1);
+        app.select_contact(app.contacts[1].public_key);
         let reordered = vec![app.contacts[1].clone(), app.contacts[0].clone()];
         app.set_contacts(reordered);
         assert_eq!(app.selected_contact().unwrap().adv_name, "c1");
@@ -863,7 +871,7 @@ mod tests {
     #[test]
     fn contacts_reload_without_the_selected_contact_deselects() {
         let mut app = app_with_contacts(2);
-        app.select_contact(1);
+        app.select_contact(app.contacts[1].public_key);
         let remaining = vec![app.contacts[0].clone()];
         app.set_contacts(remaining);
         assert_eq!(app.selected_key, None);
@@ -897,7 +905,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(app.text_limit(), 160 - "Base: ".len());
-        app.select_contact(0);
+        app.select_contact(app.contacts[0].public_key);
         assert_eq!(app.text_limit(), 160);
     }
 
