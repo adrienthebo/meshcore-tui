@@ -125,18 +125,20 @@ pub fn contact_type_label(contact_type: u8) -> &'static str {
 }
 
 /// How long ago a contact advertised, to the minute, from the advert's own
-/// timestamp; it's the sender's clock, so a clock ahead of ours reads as
-/// "<1m ago". Both times are cut to whole minutes, so every age in the table
-/// ticks over together once a minute.
+/// timestamp; it's the sender's clock, so a clock ahead of ours gives a
+/// negative age ("-3d"). Both times are cut to whole minutes, so every age in
+/// the table ticks over together once a minute.
 fn advert_age(last_advert: u32, now: i64) -> String {
     if last_advert == 0 {
         return "—".to_string();
     }
-    let minutes = (now / 60 - last_advert as i64 / 60).clamp(0, (u32::MAX / 60) as i64) as u32;
-    if minutes == 0 {
-        return "<1m ago".to_string();
+    let minutes = now / 60 - last_advert as i64 / 60;
+    let size = format_duration((minutes.unsigned_abs() * 60).try_into().unwrap_or(u32::MAX));
+    match minutes {
+        0 => "<1m ago".to_string(),
+        ..0 => format!("-{}", size),
+        _ => format!("{} ago", size),
     }
-    format!("{} ago", format_duration(minutes * 60))
 }
 
 /// "flood" when the radio has no route to this contact, else the hop count
@@ -411,7 +413,22 @@ mod tests {
         assert_eq!(advert_age((NOW - 30) as u32, NOW), "1m ago");
         assert_eq!(advert_age(NOW as u32, NOW + 30), "<1m ago");
         // The sender's clock is ahead of ours
-        assert_eq!(advert_age((NOW + 60) as u32, NOW), "<1m ago");
+        assert_eq!(advert_age((NOW + 30) as u32, NOW), "<1m ago");
+        assert_eq!(advert_age((NOW + 60) as u32, NOW), "-1m");
+        assert_eq!(advert_age((NOW + 3 * 86_400) as u32, NOW), "-3d");
+    }
+
+    #[test]
+    fn adverts_from_the_future_sort_first() {
+        let mut app = app_with_heard_contacts();
+        let mut ahead = contact("Ahead", [0xe5; 6]);
+        ahead.last_advert = (NOW + 3 * 86_400) as u32;
+        app.contacts.push(ahead);
+        let names: Vec<&str> = by_newest_advert(&app)
+            .iter()
+            .map(|c| c.adv_name.as_str())
+            .collect();
+        assert_eq!(names, ["Ahead", "Alice", "Hilltop", "Never heard", "Bob"]);
     }
 
     #[test]
