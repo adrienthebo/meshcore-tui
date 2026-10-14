@@ -22,8 +22,11 @@ use crate::view::{KeyResult, View};
 #[derive(Debug, Default)]
 pub struct ContactsTab {
     focus: Section,
-    /// The browsed row and how far the table has scrolled; drawing scrolls it
-    /// to keep the browsed row in view
+    /// The browsed contact's public key; no row is browsed while it isn't in
+    /// the contact list
+    browsed: Option<[u8; 32]>,
+    /// How far the table has scrolled; drawing selects the browsed contact's
+    /// row and scrolls to keep it in view
     table: RefCell<TableState>,
     /// How many of the newest adverts are scrolled past
     adverts_scroll: usize,
@@ -88,21 +91,27 @@ enum Step {
 impl ContactsTab {
     /// Move the browsed row, starting from the first when none is browsed
     fn browse(&mut self, app: &App, step: Step) {
-        let Some(last) = app.contacts.len().checked_sub(1) else {
+        let contacts = by_newest_advert(app);
+        let Some(last) = contacts.len().checked_sub(1) else {
             return;
         };
-        let table = self.table.get_mut();
-        let row = match (table.selected(), step) {
+        let row = match (self.browsed_row(&contacts), step) {
             (None, _) => 0,
             (Some(row), Step::Up) => row.saturating_sub(1),
             (Some(row), Step::Down) => (row + 1).min(last),
         };
-        table.select(Some(row));
+        self.browsed = Some(contacts[row].public_key);
+    }
+
+    /// The browsed contact's row in the table's order
+    fn browsed_row(&self, contacts: &[&Contact]) -> Option<usize> {
+        let key = self.browsed?;
+        contacts.iter().position(|c| c.public_key == key)
     }
 
     fn browsed_contact<'a>(&self, app: &'a App) -> Option<&'a Contact> {
-        let row = self.table.borrow().selected()?;
-        by_newest_advert(app).get(row).copied()
+        let key = self.browsed?;
+        app.contacts.iter().find(|c| c.public_key == key)
     }
 }
 
@@ -175,7 +184,9 @@ fn draw_contact_table(
     now: i64,
     area: Rect,
 ) {
-    let rows: Vec<Row> = by_newest_advert(app)
+    let contacts = by_newest_advert(app);
+    let browsed_row = tab.browsed_row(&contacts);
+    let rows: Vec<Row> = contacts
         .into_iter()
         .map(|c| {
             Row::new([
@@ -215,7 +226,9 @@ fn draw_contact_table(
             format!(" Contacts ({}) ", app.contacts.len()),
             border,
         ));
-    f.render_stateful_widget(table, area, &mut tab.table.borrow_mut());
+    let mut state = tab.table.borrow_mut();
+    state.select(browsed_row);
+    f.render_stateful_widget(table, area, &mut state);
 }
 
 /// Adverts, newest first from the scroll position; a new contact's shows what it added
@@ -346,7 +359,7 @@ mod tests {
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Down);
         }
-        assert_eq!(tab.table.borrow().selected(), Some(app.contacts.len() - 1));
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Bob"));
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Up);
         }
@@ -357,7 +370,40 @@ mod tests {
     fn arrows_with_no_contacts_browse_nothing() {
         let (mut tab, app) = (ContactsTab::default(), App::new(0));
         press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(tab.browsed, None);
+    }
+
+    #[test]
+    fn the_browsed_row_follows_its_contact_when_the_list_changes() {
+        let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        render(&app, &tab, 80, 16);
+        assert_eq!(tab.table.borrow().selected(), Some(0));
+        // A contact heard more recently sorts above Alice
+        let mut carol = contact("Carol", [0xe5; 6]);
+        carol.last_advert = (NOW - 60) as u32;
+        let mut reloaded = app.contacts.clone();
+        reloaded.push(carol);
+        reloaded.reverse();
+        app.set_contacts(reloaded);
+        render(&app, &tab, 80, 16);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Alice"));
+        assert_eq!(tab.table.borrow().selected(), Some(1));
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Hilltop"));
+    }
+
+    #[test]
+    fn a_browsed_contact_that_leaves_the_list_browses_nothing() {
+        let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        app.contacts.retain(|c| c.adv_name != "Alice");
+        render(&app, &tab, 80, 16);
+        assert_eq!(browsed_name(&tab, &app), None);
         assert_eq!(tab.table.borrow().selected(), None);
+        assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Hilltop"));
     }
 
     #[test]
@@ -393,7 +439,7 @@ mod tests {
         }
         assert_eq!(tab.adverts_scroll, 0);
         // The table keeps its browsed row while the adverts have focus
-        assert_eq!(tab.table.borrow().selected(), None);
+        assert_eq!(tab.browsed, None);
         press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.focus, Section::Table);
     }
