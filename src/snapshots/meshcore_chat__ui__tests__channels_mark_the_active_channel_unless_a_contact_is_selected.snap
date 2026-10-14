@@ -1,0 +1,8 @@
+---
+source: src/ui.rs
+expression: "render_panel(24, 4, |f, area|\ndraw_channels(f, &app, &Theme::CLASSIC, false, area))"
+---
+"╭ Channels (2) ────────╮"
+"│  Public              │"
+"│▶ Ops                 │"
+"╰──────────────────────╯"

@@ -45,6 +45,8 @@ pub enum Action {
     Submit(String),
     /// Address messages to the contact with this public key
     SelectContact([u8; 32]),
+    /// Address messages to the channel with this index
+    SelectChannel(u8),
     /// Address messages to the contact with this public key and show the Overview to write them
     MessageContact([u8; 32]),
     /// Add the discovered node with this public key as a contact
@@ -86,6 +88,7 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
         Action::SelectContact(key) => {
             app.select_contact(key);
         }
+        Action::SelectChannel(ch) => app.select_channel(ch),
         Action::MessageContact(key) => {
             if app.select_contact(key) {
                 ui.show_overview();
@@ -221,6 +224,15 @@ mod tests {
         assert_eq!(app.selected_index(), Some(1));
         apply_action(&mut app, &mut ui, Action::SelectContact([4; 32]));
         assert_eq!(app.selected_index(), Some(1));
+    }
+
+    #[test]
+    fn select_channel_clears_the_contact_selection() {
+        let (mut app, mut ui) = (app_with_contacts(1), test_ui());
+        app.select_contact(app.contacts[0].public_key);
+        apply_action(&mut app, &mut ui, Action::SelectChannel(2));
+        assert_eq!(app.selected_channel(), Some(2));
+        assert_eq!(app.selected_key, None);
     }
 
     #[test]

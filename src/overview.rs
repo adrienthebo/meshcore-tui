@@ -4,7 +4,9 @@ use ratatui::{layout::Rect, Frame};
 use crate::app::App;
 use crate::input::InputLine;
 use crate::theme::Theme;
-use crate::ui::{draw_contacts, draw_messages, draw_overview, draw_packets, draw_radio};
+use crate::ui::{
+    draw_channels, draw_favorites, draw_messages, draw_overview, draw_packets, draw_radio,
+};
 use crate::update::Action;
 use crate::view::{KeyResult, View};
 
@@ -14,16 +16,18 @@ pub enum Panel {
     #[default]
     Input,
     Messages,
-    Contacts,
+    Channels,
+    Favorites,
     Packets,
 }
 
-/// Chat, contacts, packets and the radio, with the input line for sending
+/// Chat, channels, favorites, packets and the radio, with the input line for sending
 #[derive(Debug, Default)]
 pub struct Overview {
     pub focus: Panel,
     pub messages: MessageLog,
-    pub contacts: ContactList,
+    pub channels: ChannelList,
+    pub favorites: FavoriteList,
     pub packets: PacketLog,
     pub radio: RadioPanel,
     pub input: InputLine,
@@ -49,8 +53,9 @@ impl View for Overview {
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Panel::Input => Panel::Messages,
-                    Panel::Messages => Panel::Contacts,
-                    Panel::Contacts => Panel::Packets,
+                    Panel::Messages => Panel::Channels,
+                    Panel::Channels => Panel::Favorites,
+                    Panel::Favorites => Panel::Packets,
                     Panel::Packets => Panel::Input,
                 };
                 KeyResult::Handled
@@ -71,7 +76,8 @@ impl Overview {
         match self.focus {
             Panel::Input => &self.input,
             Panel::Messages => &self.messages,
-            Panel::Contacts => &self.contacts,
+            Panel::Channels => &self.channels,
+            Panel::Favorites => &self.favorites,
             Panel::Packets => &self.packets,
         }
     }
@@ -80,7 +86,8 @@ impl Overview {
         match self.focus {
             Panel::Input => &mut self.input,
             Panel::Messages => &mut self.messages,
-            Panel::Contacts => &mut self.contacts,
+            Panel::Channels => &mut self.channels,
+            Panel::Favorites => &mut self.favorites,
             Panel::Packets => &mut self.packets,
         }
     }
@@ -104,30 +111,66 @@ impl View for MessageLog {
     }
 }
 
-/// The radio's contacts; ↑↓ choose who messages go to
-#[derive(Debug, Default)]
-pub struct ContactList;
+/// The position ↑ or ↓ moves to from `current` in a list of `len` entries; the
+/// first entry when nothing in the list is selected, None for other keys or an empty list
+fn arrow_position(key: KeyCode, current: Option<usize>, len: usize) -> Option<usize> {
+    let last = len.checked_sub(1)?;
+    match key {
+        KeyCode::Up => Some(current.map_or(0, |s| s.saturating_sub(1))),
+        KeyCode::Down => Some(current.map_or(0, |s| (s + 1).min(last))),
+        _ => None,
+    }
+}
 
-impl View for ContactList {
+/// The radio's channels; ↑↓ choose which one messages go to
+#[derive(Debug, Default)]
+pub struct ChannelList;
+
+impl View for ChannelList {
     fn title(&self) -> &str {
-        "Contacts"
+        "Channels"
     }
 
     fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool) {
-        draw_contacts(f, app, theme, focused, area);
+        draw_channels(f, app, theme, focused, area);
     }
 
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
-        let idx = match key.code {
-            KeyCode::Up => app.selected_index().map_or(0, |s| s.saturating_sub(1)),
-            KeyCode::Down => {
-                let last = app.contacts.len().saturating_sub(1);
-                app.selected_index().map_or(0, |s| (s + 1).min(last))
-            }
-            _ => return KeyResult::Ignored,
-        };
-        match app.contacts.get(idx) {
-            Some(contact) => KeyResult::Action(Action::SelectContact(contact.public_key)),
+        let channels = app.channel_indexes();
+        let current = app
+            .selected_channel()
+            .and_then(|ch| channels.iter().position(|&c| c == ch));
+        match arrow_position(key.code, current, channels.len()) {
+            Some(idx) => KeyResult::Action(Action::SelectChannel(channels[idx])),
+            None => KeyResult::Ignored,
+        }
+    }
+
+    fn key_hints(&self) -> Vec<&'static str> {
+        vec!["↑↓=channel"]
+    }
+}
+
+/// The radio's favourite contacts; ↑↓ choose who messages go to
+#[derive(Debug, Default)]
+pub struct FavoriteList;
+
+impl View for FavoriteList {
+    fn title(&self) -> &str {
+        "Favorites"
+    }
+
+    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool) {
+        draw_favorites(f, app, theme, focused, area);
+    }
+
+    fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        let favorites = app.favorites();
+        let current = favorites
+            .iter()
+            .position(|c| Some(c.public_key) == app.selected_key);
+        match arrow_position(key.code, current, favorites.len()) {
+            Some(idx) => KeyResult::Action(Action::SelectContact(favorites[idx].public_key)),
             None => KeyResult::Ignored,
         }
     }
@@ -190,7 +233,7 @@ mod tests {
         let (mut overview, app) = (Overview::default(), App::new(0));
         assert_eq!(overview.focus, Panel::Input);
         press(&mut overview, &app, KeyCode::Char('a'));
-        overview.focus = Panel::Contacts;
+        overview.focus = Panel::Favorites;
         assert_eq!(
             press(&mut overview, &app, KeyCode::Char('b')),
             KeyResult::Ignored
@@ -220,7 +263,7 @@ mod tests {
     fn tab_cycles_panels() {
         let (mut overview, app) = (Overview::default(), App::new(0));
         let mut order = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             press(&mut overview, &app, KeyCode::Tab);
             order.push(overview.focus.clone());
         }
@@ -228,7 +271,8 @@ mod tests {
             order,
             [
                 Panel::Messages,
-                Panel::Contacts,
+                Panel::Channels,
+                Panel::Favorites,
                 Panel::Packets,
                 Panel::Input
             ]
@@ -236,66 +280,149 @@ mod tests {
     }
 
     #[test]
-    fn arrows_reach_the_contact_list_only_while_it_has_focus() {
-        let (mut overview, app) = (Overview::default(), app_with_contacts(3));
+    fn arrows_reach_the_favorite_list_only_while_it_has_focus() {
+        let (mut overview, app) = (Overview::default(), app_with_favorites(3));
         assert_eq!(
             press(&mut overview, &app, KeyCode::Down),
             KeyResult::Ignored
         );
-        overview.focus = Panel::Contacts;
-        assert_eq!(press(&mut overview, &app, KeyCode::Down), select(&app, 0));
+        overview.focus = Panel::Favorites;
+        assert_eq!(
+            press(&mut overview, &app, KeyCode::Down),
+            select_contact(&app, 0)
+        );
     }
 
     #[test]
     fn key_hints_follow_focus() {
         let mut overview = Overview::default();
         assert_eq!(overview.key_hints(), ["Enter=send", "Tab=panel"]);
-        overview.focus = Panel::Contacts;
+        overview.focus = Panel::Channels;
+        assert_eq!(overview.key_hints(), ["↑↓=channel", "Tab=panel"]);
+        overview.focus = Panel::Favorites;
         assert_eq!(overview.key_hints(), ["↑↓=contact", "Tab=panel"]);
         overview.focus = Panel::Packets;
         assert_eq!(overview.key_hints(), ["Tab=panel"]);
     }
 
-    // ── ContactList ──────────────────────────────────────────────────────────
+    // ── arrow_position ───────────────────────────────────────────────────────
 
-    /// The action that selects the contact at `idx` in the contact list
-    fn select(app: &App, idx: usize) -> KeyResult {
-        KeyResult::Action(Action::SelectContact(app.contacts[idx].public_key))
+    #[test]
+    fn arrows_move_within_the_list() {
+        assert_eq!(arrow_position(KeyCode::Down, Some(1), 3), Some(2));
+        assert_eq!(arrow_position(KeyCode::Down, Some(2), 3), Some(2));
+        assert_eq!(arrow_position(KeyCode::Up, Some(1), 3), Some(0));
+        assert_eq!(arrow_position(KeyCode::Up, Some(0), 3), Some(0));
     }
 
     #[test]
-    fn contact_arrows_move_the_selection_within_the_list() {
-        let mut app = app_with_contacts(3);
-        let mut list = ContactList;
-        app.select_contact(app.contacts[2].public_key);
-        assert_eq!(press(&mut list, &app, KeyCode::Down), select(&app, 2));
-        assert_eq!(press(&mut list, &app, KeyCode::Up), select(&app, 1));
-        app.select_contact(app.contacts[0].public_key);
-        assert_eq!(press(&mut list, &app, KeyCode::Up), select(&app, 0));
+    fn arrows_with_nothing_selected_move_to_the_first() {
+        assert_eq!(arrow_position(KeyCode::Up, None, 2), Some(0));
+        assert_eq!(arrow_position(KeyCode::Down, None, 2), Some(0));
     }
 
     #[test]
-    fn contact_arrows_with_no_selection_select_the_first() {
-        let app = app_with_contacts(2);
-        assert_eq!(press(&mut ContactList, &app, KeyCode::Up), select(&app, 0));
+    fn arrows_in_an_empty_list_go_nowhere() {
+        assert_eq!(arrow_position(KeyCode::Down, None, 0), None);
+    }
+
+    #[test]
+    fn other_keys_go_nowhere() {
+        assert_eq!(arrow_position(KeyCode::Char('a'), Some(0), 2), None);
+    }
+
+    // ── ChannelList ──────────────────────────────────────────────────────────
+
+    fn select_channel(ch: u8) -> KeyResult {
+        KeyResult::Action(Action::SelectChannel(ch))
+    }
+
+    /// Channels at indexes 0, 1 and 3
+    fn app_with_channels() -> App {
+        let mut app = app_with_contacts(1);
+        for (idx, name) in [(0, "Public"), (1, "Ops"), (3, "Club")] {
+            app.channels.insert(idx, channel(name));
+        }
+        app
+    }
+
+    #[test]
+    fn channel_arrows_step_through_channel_indexes() {
+        let mut app = app_with_channels();
+        app.active_channel = 1;
         assert_eq!(
-            press(&mut ContactList, &app, KeyCode::Down),
-            select(&app, 0)
+            press(&mut ChannelList, &app, KeyCode::Down),
+            select_channel(3)
+        );
+        assert_eq!(
+            press(&mut ChannelList, &app, KeyCode::Up),
+            select_channel(0)
         );
     }
 
     #[test]
-    fn contact_arrows_with_no_contacts_select_nothing() {
+    fn channel_arrows_while_a_contact_is_selected_select_the_first_channel() {
+        let mut app = app_with_channels();
+        app.active_channel = 3;
+        app.select_contact(app.contacts[0].public_key);
         assert_eq!(
-            press(&mut ContactList, &App::new(0), KeyCode::Down),
+            press(&mut ChannelList, &app, KeyCode::Down),
+            select_channel(0)
+        );
+    }
+
+    #[test]
+    fn channel_arrows_with_no_channels_select_nothing() {
+        assert_eq!(
+            press(&mut ChannelList, &App::new(0), KeyCode::Down),
             KeyResult::Ignored
         );
     }
 
+    // ── FavoriteList ─────────────────────────────────────────────────────────
+
+    /// The action that selects the contact at `idx` in the contact list
+    fn select_contact(app: &App, idx: usize) -> KeyResult {
+        KeyResult::Action(Action::SelectContact(app.contacts[idx].public_key))
+    }
+
+    /// `n` contacts, every other one a favourite
+    fn app_with_favorites(n: u8) -> App {
+        let mut app = app_with_contacts(n * 2);
+        for contact in app.contacts.iter_mut().step_by(2) {
+            contact.flags = 0x01;
+        }
+        app
+    }
+
     #[test]
-    fn contact_list_ignores_other_keys() {
+    fn favorite_arrows_skip_contacts_that_are_not_favorites() {
+        let mut app = app_with_favorites(3);
+        app.select_contact(app.contacts[2].public_key);
         assert_eq!(
-            press(&mut ContactList, &App::new(0), KeyCode::Char('a')),
+            press(&mut FavoriteList, &app, KeyCode::Down),
+            select_contact(&app, 4)
+        );
+        assert_eq!(
+            press(&mut FavoriteList, &app, KeyCode::Up),
+            select_contact(&app, 0)
+        );
+    }
+
+    #[test]
+    fn favorite_arrows_from_a_contact_that_is_not_a_favorite_select_the_first() {
+        let mut app = app_with_favorites(2);
+        app.select_contact(app.contacts[3].public_key);
+        assert_eq!(
+            press(&mut FavoriteList, &app, KeyCode::Down),
+            select_contact(&app, 0)
+        );
+    }
+
+    #[test]
+    fn favorite_arrows_with_no_favorites_select_nothing() {
+        assert_eq!(
+            press(&mut FavoriteList, &app_with_contacts(2), KeyCode::Down),
             KeyResult::Ignored
         );
     }

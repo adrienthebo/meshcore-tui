@@ -409,6 +409,26 @@ impl App {
         self.selected_key = None;
     }
 
+    /// The channel messages go to, unless a contact is selected
+    pub fn selected_channel(&self) -> Option<u8> {
+        match self.selected_contact() {
+            Some(_) => None,
+            None => Some(self.active_channel),
+        }
+    }
+
+    /// Indexes of the channels read from the radio, in order
+    pub fn channel_indexes(&self) -> Vec<u8> {
+        let mut indexes: Vec<u8> = self.channels.keys().copied().collect();
+        indexes.sort_unstable();
+        indexes
+    }
+
+    /// Contacts with the radio's favourite flag, bit 0 of the contact flags
+    pub fn favorites(&self) -> Vec<&Contact> {
+        self.contacts.iter().filter(|c| c.flags & 1 != 0).collect()
+    }
+
     /// Replace the contact list, keeping the selection on the same contact
     pub fn set_contacts(&mut self, contacts: Vec<Contact>) {
         let selected_name = self.selected_contact().map(|c| sanitize(&c.adv_name));
@@ -925,6 +945,41 @@ mod tests {
         assert!(app.select_contact(key));
         assert!(!app.select_contact([4; 32]));
         assert_eq!(app.selected_key, Some(key));
+    }
+
+    #[test]
+    fn selected_channel_is_the_active_channel_unless_a_contact_is_selected() {
+        let mut app = app_with_contacts(1);
+        app.active_channel = 2;
+        assert_eq!(app.selected_channel(), Some(2));
+        app.select_contact(app.contacts[0].public_key);
+        assert_eq!(app.selected_channel(), None);
+        // A selection that has left the contact list sends to the channel
+        app.selected_key = Some([4; 32]);
+        assert_eq!(app.selected_channel(), Some(2));
+    }
+
+    #[test]
+    fn channel_indexes_are_in_order() {
+        let mut app = App::new(0);
+        for idx in [3, 0, 1] {
+            app.channels.insert(idx, channel("Ops"));
+        }
+        assert_eq!(app.channel_indexes(), [0, 1, 3]);
+    }
+
+    #[test]
+    fn favorites_are_contacts_with_flag_bit_zero() {
+        let mut app = app_with_contacts(3);
+        app.contacts[0].flags = 0x01;
+        app.contacts[1].flags = 0x02;
+        app.contacts[2].flags = 0x03;
+        let names: Vec<&str> = app
+            .favorites()
+            .iter()
+            .map(|c| c.adv_name.as_str())
+            .collect();
+        assert_eq!(names, ["c0", "c2"]);
     }
 
     #[test]

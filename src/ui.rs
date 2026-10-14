@@ -83,6 +83,11 @@ pub fn draw_overview(f: &mut Frame, app: &App, overview: &Overview, theme: &Them
         .constraints([Constraint::Min(40), Constraint::Length(30)])
         .split(chunks[0]);
 
+    let targets = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Fill(1)])
+        .split(main[1]);
+
     let diagnostics = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(40), Constraint::Length(50)])
@@ -93,8 +98,11 @@ pub fn draw_overview(f: &mut Frame, app: &App, overview: &Overview, theme: &Them
         .messages
         .draw(f, main[0], app, theme, focused(Panel::Messages));
     overview
-        .contacts
-        .draw(f, main[1], app, theme, focused(Panel::Contacts));
+        .channels
+        .draw(f, targets[0], app, theme, focused(Panel::Channels));
+    overview
+        .favorites
+        .draw(f, targets[1], app, theme, focused(Panel::Favorites));
     overview
         .packets
         .draw(f, diagnostics[0], app, theme, focused(Panel::Packets));
@@ -239,15 +247,44 @@ pub fn draw_messages(f: &mut Frame, app: &App, theme: &Theme, focused: bool, are
     f.render_widget(msg_w, area);
 }
 
-pub fn draw_contacts(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area: Rect) {
+pub fn draw_channels(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area: Rect) {
+    let selected = app.selected_channel();
+    let rows: Vec<(String, bool)> = app
+        .channel_indexes()
+        .into_iter()
+        .map(|idx| (app.channel_label(idx), selected == Some(idx)))
+        .collect();
+    draw_targets(f, theme, focused, area, "Channels", &rows);
+}
+
+pub fn draw_favorites(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area: Rect) {
+    let rows: Vec<(String, bool)> = app
+        .favorites()
+        .into_iter()
+        .map(|c| {
+            let hex = c.prefix_hex();
+            let hex_short = &hex[..8.min(hex.len())];
+            let row = format!("{} ({})", sanitize(&c.adv_name), hex_short);
+            (row, app.selected_key == Some(c.public_key))
+        })
+        .collect();
+    draw_targets(f, theme, focused, area, "Favorites", &rows);
+}
+
+/// A titled list of message targets, each row with whether messages go to it;
+/// rows are cut to the panel width
+fn draw_targets(
+    f: &mut Frame,
+    theme: &Theme,
+    focused: bool,
+    area: Rect,
+    title: &str,
+    rows: &[(String, bool)],
+) {
     let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
-    let selected = app.selected_index();
-    let citems: Vec<ListItem> = app
-        .contacts
+    let citems: Vec<ListItem> = rows
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let sel = selected == Some(i);
+        .map(|&(ref text, sel)| {
             let sty = if sel {
                 Style::default()
                     .fg(theme.selected_fg)
@@ -256,13 +293,9 @@ pub fn draw_contacts(f: &mut Frame, app: &App, theme: &Theme, focused: bool, are
             } else {
                 Style::default().fg(theme.text)
             };
-            let name = sanitize(&c.adv_name);
-            let hex = c.prefix_hex();
-            let hex_short = &hex[..8.min(hex.len())];
-
             // Build the full line and truncate to exactly cpanel_width
             let marker = if sel { "\u{25b6} " } else { "  " };
-            let full = format!("{}{} ({})", marker, name, hex_short);
+            let full = format!("{}{}", marker, text);
             let line = truncate_to_width(&full, cpanel_width);
 
             // Pad with spaces to fill the panel (needed for selection highlight)
@@ -282,11 +315,7 @@ pub fn draw_contacts(f: &mut Frame, app: &App, theme: &Theme, focused: bool, are
     } else {
         theme.contacts_border
     };
-    let c_w = List::new(citems).block(panel(
-        theme,
-        format!(" Contacts ({}) ", app.contacts.len()),
-        cc,
-    ));
+    let c_w = List::new(citems).block(panel(theme, format!(" {} ({}) ", title, rows.len()), cc));
     f.render_widget(c_w, area);
 }
 
@@ -537,7 +566,7 @@ mod tests {
     use super::*;
     use crate::app::{ChatMessage, PacketLogEntry};
     use crate::test_support::*;
-    use meshcore_rs::events::SelfInfo;
+    use meshcore_rs::events::{Contact, SelfInfo};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -583,7 +612,10 @@ mod tests {
         });
         app.channels.insert(0, channel("Public"));
         app.channels.insert(1, channel("Ops"));
-        app.contacts.push(contact("Alice", [0xa1; 6]));
+        app.contacts.push(Contact {
+            flags: 0x01,
+            ..contact("Alice", [0xa1; 6])
+        });
         app.contacts
             .push(contact("Bob the very long named repeater", [0xb2; 6]));
         app.rx_count = 3;
@@ -717,24 +749,44 @@ mod tests {
     }
 
     #[test]
-    fn contacts_title_counts_contacts() {
-        let rows = rows(&render_panel(30, 5, |f, area| {
-            draw_contacts(f, &connected_app(), &Theme::CLASSIC, false, area)
-        }));
-        assert!(rows[0].contains(" Contacts (2) "));
-    }
-
-    #[test]
-    fn contacts_with_selection_and_truncation() {
+    fn channels_mark_the_active_channel_unless_a_contact_is_selected() {
         let mut app = connected_app();
-        app.select_contact(app.contacts[0].public_key);
-        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_contacts(
+        app.active_channel = 1;
+        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_channels(
             f,
             &app,
             &Theme::CLASSIC,
             false,
             area
         )));
+        app.select_contact(app.contacts[0].public_key);
+        let rows = rows(&render_panel(24, 4, |f, area| {
+            draw_channels(f, &app, &Theme::CLASSIC, false, area)
+        }));
+        assert!(rows.iter().all(|row| !row.contains('\u{25b6}')));
+    }
+
+    #[test]
+    fn favorites_with_selection_and_truncation() {
+        let mut app = connected_app();
+        app.contacts[1].flags = 0x01;
+        app.select_contact(app.contacts[0].public_key);
+        insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_favorites(
+            f,
+            &app,
+            &Theme::CLASSIC,
+            false,
+            area
+        )));
+    }
+
+    #[test]
+    fn favorites_leave_out_other_contacts() {
+        let rows = rows(&render_panel(30, 5, |f, area| {
+            draw_favorites(f, &connected_app(), &Theme::CLASSIC, false, area)
+        }));
+        assert!(rows[0].contains(" Favorites (1) "));
+        assert!(!rows.iter().any(|row| row.contains("Bob")));
     }
 
     #[test]
@@ -900,13 +952,13 @@ mod tests {
         let app = connected_app();
         let mut ui = Ui::new(Theme::VAPORWAVE);
         ui.tabs[0] = Box::new(Overview {
-            focus: Panel::Contacts,
+            focus: Panel::Channels,
             ..Overview::default()
         });
         let backend = render_panel(80, 24, |f, _| draw(f, &app, &ui));
         let buffer = backend.buffer();
         // Status border, the current tab's outline over the muted rule and the key
-        // hints at its end, then the focused contacts border and the unfocused
+        // hints at its end, then the focused channels border and the unfocused
         // messages border
         assert_eq!(buffer[(0, 0)].fg, ui.theme.status_border);
         assert_eq!(buffer[(1, 3)].fg, ui.theme.focus);
