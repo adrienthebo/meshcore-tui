@@ -106,9 +106,10 @@ panel, and takes the key itself only when the panel returns
    returns an `Effect`.
 4. **No `_ =>` catch-alls in `Msg` or `Action` routing**, so a new variant
    fails to compile until it's handled.
-5. **Key routing order**: the keys every tab shares (Esc, Ctrl-C, F-keys)
-   come first, then the focused panel, then its tab. The first to use the key
-   wins.
+5. **Key routing order**: the keys every tab shares (Ctrl-C, F-keys) come
+   first, then the focused panel, then its tab. The first to use the key
+   wins. Esc is the exception: it goes to the views first, so an open popover
+   can close, and quits only when none of them uses it.
 
 ### Why not components or Flux
 

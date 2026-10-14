@@ -69,10 +69,10 @@ impl Ui {
         self.tabs[self.active].as_ref()
     }
 
-    /// Apply a key press; keys every tab shares come first, the rest go to the tab on screen
+    /// Apply a key press; Ctrl-C and the F-keys come first, the rest go to the
+    /// tab on screen, and Esc quits only when the tab doesn't use it
     pub fn handle_key(&mut self, key: KeyEvent, app: &App) -> Option<Action> {
         match key.code {
-            KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(Action::Quit)
             }
@@ -84,6 +84,7 @@ impl Ui {
             }
             _ => match self.tabs[self.active].handle_key(key, app) {
                 KeyResult::Action(action) => Some(action),
+                KeyResult::Ignored if key.code == KeyCode::Esc => Some(Action::Quit),
                 KeyResult::Handled | KeyResult::Ignored => None,
             },
         }
@@ -154,6 +155,37 @@ mod tests {
                 Some(Action::Quit)
             );
         }
+    }
+
+    /// A tab that uses Esc, as one with a popover open does
+    struct EscProbe;
+
+    impl View for EscProbe {
+        fn title(&self) -> &str {
+            "EscProbe"
+        }
+        fn draw(&self, _: &mut Frame, _: Rect, _: &App, _: &Theme, _: bool) {}
+        fn handle_key(&mut self, key: KeyEvent, _: &App) -> KeyResult {
+            match key.code {
+                KeyCode::Esc => KeyResult::Handled,
+                _ => KeyResult::Ignored,
+            }
+        }
+    }
+
+    #[test]
+    fn a_tab_that_uses_esc_keeps_it_from_quitting() {
+        let mut ui = test_ui();
+        ui.tabs = vec![Box::new(EscProbe)];
+        let app = App::new(0);
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app),
+            None
+        );
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &app),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
