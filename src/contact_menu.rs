@@ -3,7 +3,7 @@ use meshcore_rs::events::Contact;
 use ratatui::{layout::Rect, Frame};
 
 use crate::app::App;
-use crate::choices::{Choices, ChoicesKey};
+use crate::choices::{Choices, ChoicesKey, Row};
 use crate::popover::Popover;
 use crate::text::sanitize;
 use crate::theme::Theme;
@@ -16,21 +16,38 @@ enum Choice {
     Message,
 }
 
-/// Every choice, in menu order
-const CHOICES: [Choice; 1] = [Choice::Message];
-
 impl Choice {
-    fn label(self) -> &'static str {
-        match self {
-            Choice::Message => "Message",
-        }
-    }
-
     fn action(self, contact: &Contact) -> Action {
         match self {
             Choice::Message => Action::MessageContact(contact.public_key),
         }
     }
+}
+
+/// The menu for a contact of this type (ADV_TYPE_*, helpers/AdvertDataHelpers.h):
+/// what only that type offers, a divider, then what every contact offers.
+/// Actions that aren't built yet show disabled
+fn rows(contact_type: u8) -> Vec<Row<Choice>> {
+    let mut rows = match contact_type {
+        1 => vec![Row::Enabled("Message", Choice::Message)],
+        2 => vec![
+            Row::Disabled("Log in (soon)"),
+            Row::Disabled("Status (soon)"),
+        ],
+        3 => vec![
+            Row::Disabled("Log in (soon)"),
+            Row::Disabled("Read posts (soon)"),
+        ],
+        _ => Vec::new(),
+    };
+    if !rows.is_empty() {
+        rows.push(Row::Divider);
+    }
+    rows.extend([
+        Row::Disabled("Favorite (soon)"),
+        Row::Disabled("Delete (soon)"),
+    ]);
+    rows
 }
 
 /// The things to do with one contact, drawn as a popover; ↑↓ choose and Enter
@@ -44,10 +61,10 @@ pub struct ContactMenu {
 }
 
 impl ContactMenu {
-    pub fn new(key: [u8; 32]) -> Self {
+    pub fn new(contact: &Contact) -> Self {
         Self {
-            key,
-            choices: Choices::new(CHOICES.map(|c| (c.label(), c)).to_vec()),
+            key: contact.public_key,
+            choices: Choices::new(rows(contact.contact_type)),
         }
     }
 
@@ -104,10 +121,10 @@ mod tests {
     }
 
     #[test]
-    fn enter_asks_to_message_the_contact() {
+    fn enter_asks_to_message_a_companion() {
         let app = app_with_contacts(2);
         let key = app.contacts[1].public_key;
-        let mut menu = ContactMenu::new(key);
+        let mut menu = ContactMenu::new(&app.contacts[1]);
         assert_eq!(
             press(&mut menu, &app, KeyCode::Enter),
             KeyResult::Action(Action::MessageContact(key))
@@ -115,24 +132,58 @@ mod tests {
     }
 
     #[test]
-    fn arrows_are_handled() {
-        let app = app_with_contacts(1);
-        let mut menu = ContactMenu::new(app.contacts[0].public_key);
-        assert_eq!(press(&mut menu, &app, KeyCode::Up), KeyResult::Handled);
+    fn each_type_offers_its_own_actions_then_the_shared_ones() {
+        let shared = [
+            Row::Divider,
+            Row::Disabled("Favorite (soon)"),
+            Row::Disabled("Delete (soon)"),
+        ];
+        let with_shared = |own: &[Row<Choice>]| [own, &shared].concat();
+        assert_eq!(
+            rows(1),
+            with_shared(&[Row::Enabled("Message", Choice::Message)])
+        );
+        assert_eq!(
+            rows(2),
+            with_shared(&[
+                Row::Disabled("Log in (soon)"),
+                Row::Disabled("Status (soon)")
+            ])
+        );
+        assert_eq!(
+            rows(3),
+            with_shared(&[
+                Row::Disabled("Log in (soon)"),
+                Row::Disabled("Read posts (soon)")
+            ])
+        );
+        // Nothing of their own, so nothing to divide
+        assert_eq!(rows(4), shared[1..]);
+        assert_eq!(rows(0), shared[1..]);
+    }
+
+    #[test]
+    fn enter_on_a_stub_does_nothing() {
+        let mut app = app_with_contacts(1);
+        app.contacts[0].contact_type = 2;
+        let mut menu = ContactMenu::new(&app.contacts[0]);
+        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
         assert_eq!(press(&mut menu, &app, KeyCode::Down), KeyResult::Handled);
+        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
     }
 
     #[test]
     fn a_contact_that_has_gone_offers_nothing() {
-        let app = app_with_contacts(1);
-        let mut menu = ContactMenu::new([9; 32]);
+        let mut app = app_with_contacts(1);
+        let mut menu = ContactMenu::new(&app.contacts[0]);
+        app.contacts.clear();
         assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Ignored);
     }
 
     #[test]
     fn other_keys_are_not_the_menus() {
         let app = app_with_contacts(1);
-        let mut menu = ContactMenu::new(app.contacts[0].public_key);
+        let mut menu = ContactMenu::new(&app.contacts[0]);
         assert_eq!(press(&mut menu, &app, KeyCode::Tab), KeyResult::Ignored);
         assert_eq!(press(&mut menu, &app, KeyCode::Esc), KeyResult::Ignored);
     }

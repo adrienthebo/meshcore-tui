@@ -88,7 +88,7 @@ impl View for ContactsTab {
             (KeyCode::Up, Section::Table) => self.browse(app, Step::Up),
             (KeyCode::Down, Section::Table) => self.browse(app, Step::Down),
             (KeyCode::Enter, Section::Table) => match self.browsed_contact(app) {
-                Some(contact) => self.menu = Some(ContactMenu::new(contact.public_key)),
+                Some(contact) => self.menu = Some(ContactMenu::new(contact)),
                 None => return KeyResult::Ignored,
             },
             (KeyCode::Up, Section::Discovered) => self.browse_discovered(app, Step::Up),
@@ -561,17 +561,12 @@ mod tests {
         let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
         press(&mut tab, &app, KeyCode::Down);
-        press(&mut tab, &app, KeyCode::Down);
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Handled);
         assert_eq!(tab.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
-        let hilltop = app
-            .contacts
-            .iter()
-            .find(|c| c.adv_name == "Hilltop")
-            .unwrap();
+        let alice = app.contacts.iter().find(|c| c.adv_name == "Alice").unwrap();
         assert_eq!(
             press(&mut tab, &app, KeyCode::Enter),
-            KeyResult::Action(Action::MessageContact(hilltop.public_key))
+            KeyResult::Action(Action::MessageContact(alice.public_key))
         );
         // Choosing closes the menu
         assert!(tab.menu.is_none());
