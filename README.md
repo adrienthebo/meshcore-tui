@@ -44,7 +44,7 @@ cargo run --release -- --port /dev/ttyACM0 --channel 0
 | Enter | Send message |
 | Tab | Cycle panel (Messages→Channels→Favorites→Packets) |
 | ↑/↓ | Select channel or favorite contact (Channels and Favorites panels) |
-| F1 | Deselect contact (channel mode) |
+| F1–F4 | Show tab (Overview, Contacts, Radio, RX Log) |
 | Esc / Ctrl+C | Quit |
 
 ## Commands
