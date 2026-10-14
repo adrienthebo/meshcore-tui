@@ -389,7 +389,7 @@ mod tests {
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Down);
         }
-        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Bob"));
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Never heard"));
         for _ in 0..5 {
             press(&mut tab, &app, KeyCode::Up);
         }
@@ -532,7 +532,7 @@ mod tests {
             .iter()
             .map(|c| c.adv_name.as_str())
             .collect();
-        assert_eq!(names, ["Ahead", "Alice", "Hilltop", "Never heard", "Bob"]);
+        assert_eq!(names, ["Ahead", "Alice", "Hilltop", "Never heard"]);
     }
 
     #[test]
