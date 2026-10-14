@@ -12,6 +12,7 @@ use ratatui::{
 };
 
 use crate::app::{AdvertEntry, App, DiscoveredNode, Route};
+use crate::contact_menu::ContactMenu;
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
@@ -38,6 +39,8 @@ pub struct ContactsTab {
     /// The seq of the advert at the top of the scrolled adverts; None follows
     /// the newest
     adverts_top: Option<u64>,
+    /// The browsed contact's menu, while it's open; it takes keys before the tab
+    menu: Option<ContactMenu>,
 }
 
 /// The part of the Contacts tab that has keyboard focus
@@ -59,21 +62,35 @@ impl View for ContactsTab {
     }
 
     /// Tab moves focus between the table, the discovered nodes and the adverts;
-    /// ↑↓ browse contacts or discovered nodes or scroll adverts, Enter messages
-    /// the browsed contact and `a` adds the browsed discovered node
+    /// ↑↓ browse contacts or discovered nodes or scroll adverts, Enter opens
+    /// the browsed contact's menu and `a` adds the browsed discovered node.
+    /// An open menu takes every key, and Esc or a choice closes it; one whose
+    /// contact has gone closes on the next key, which goes to the tab.
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        if let Some(menu) = &mut self.menu {
+            if key.code == KeyCode::Esc {
+                self.menu = None;
+                return KeyResult::Handled;
+            }
+            if menu.contact(app).is_some() {
+                let result = menu.handle_key(key, app);
+                if matches!(result, KeyResult::Action(_)) {
+                    self.menu = None;
+                }
+                return result;
+            }
+            self.menu = None;
+        }
         match (key.code, &self.focus) {
             (KeyCode::Tab, Section::Table) => self.focus = Section::Discovered,
             (KeyCode::Tab, Section::Discovered) => self.focus = Section::Adverts,
             (KeyCode::Tab, Section::Adverts) => self.focus = Section::Table,
             (KeyCode::Up, Section::Table) => self.browse(app, Step::Up),
             (KeyCode::Down, Section::Table) => self.browse(app, Step::Down),
-            (KeyCode::Enter, Section::Table) => {
-                return match self.browsed_contact(app) {
-                    Some(contact) => KeyResult::Action(Action::MessageContact(contact.public_key)),
-                    None => KeyResult::Ignored,
-                };
-            }
+            (KeyCode::Enter, Section::Table) => match self.browsed_contact(app) {
+                Some(contact) => self.menu = Some(ContactMenu::new(contact.public_key)),
+                None => return KeyResult::Ignored,
+            },
             (KeyCode::Up, Section::Discovered) => self.browse_discovered(app, Step::Up),
             (KeyCode::Down, Section::Discovered) => self.browse_discovered(app, Step::Down),
             (KeyCode::Char('a'), Section::Discovered) => {
@@ -90,8 +107,11 @@ impl View for ContactsTab {
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
+        if let Some(menu) = &self.menu {
+            return menu.key_hints();
+        }
         match self.focus {
-            Section::Table => vec!["↑↓=browse", "Enter=message", "Tab=panel"],
+            Section::Table => vec!["↑↓=browse", "Enter=actions", "Tab=panel"],
             Section::Discovered => vec!["↑↓=browse", "a=add", "Tab=panel"],
             Section::Adverts => vec!["↑↓=scroll", "Tab=panel"],
         }
@@ -255,6 +275,9 @@ fn draw_contacts_tab(
     draw_contact_table(f, app, tab, theme, now, chunks[0]);
     draw_discovered(f, &app.discovered, tab, theme, now, chunks[1]);
     draw_adverts(f, &app.adverts, tab, theme, chunks[2]);
+    if let Some(menu) = &tab.menu {
+        menu.draw(f, area, app, theme, true);
+    }
 }
 
 /// A contact's table row; `heard` is when it advertised, as unix time
@@ -534,11 +557,13 @@ mod tests {
     }
 
     #[test]
-    fn enter_messages_the_browsed_contact() {
+    fn enter_opens_the_browsed_contacts_menu_which_messages_it() {
         let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Handled);
+        assert_eq!(tab.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
         let hilltop = app
             .contacts
             .iter()
@@ -548,12 +573,49 @@ mod tests {
             press(&mut tab, &app, KeyCode::Enter),
             KeyResult::Action(Action::MessageContact(hilltop.public_key))
         );
+        // Choosing closes the menu
+        assert!(tab.menu.is_none());
+    }
+
+    #[test]
+    fn contact_menu_shows_over_the_tab() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        insta::assert_snapshot!(render(&app, &tab, 80, 26));
+    }
+
+    #[test]
+    fn an_open_menu_takes_the_keys_and_esc_closes_it() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        // Neither moves focus nor browses the table
+        press(&mut tab, &app, KeyCode::Tab);
+        press(&mut tab, &app, KeyCode::Down);
+        assert_eq!(tab.focus, Section::Table);
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Alice"));
+        assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Handled);
+        assert!(tab.menu.is_none());
+        // With the menu closed, Esc is no longer the tab's
+        assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Ignored);
+    }
+
+    #[test]
+    fn a_menu_whose_contact_has_gone_closes_on_the_next_key() {
+        let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        app.contacts.retain(|c| c.adv_name != "Alice");
+        press(&mut tab, &app, KeyCode::Down);
+        assert!(tab.menu.is_none());
+        assert_eq!(browsed_name(&tab, &app).as_deref(), Some("Hilltop"));
     }
 
     #[test]
     fn tab_moves_focus_to_the_adverts_which_scroll_within_bounds() {
         let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
-        assert_eq!(tab.key_hints(), ["↑↓=browse", "Enter=message", "Tab=panel"]);
+        assert_eq!(tab.key_hints(), ["↑↓=browse", "Enter=actions", "Tab=panel"]);
         press(&mut tab, &app, KeyCode::Tab);
         press(&mut tab, &app, KeyCode::Tab);
         assert_eq!(tab.key_hints(), ["↑↓=scroll", "Tab=panel"]);

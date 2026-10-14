@@ -1,8 +1,10 @@
 mod app;
 mod commands;
+mod contact_menu;
 mod contacts_tab;
 mod input;
 mod overview;
+mod popover;
 mod radio;
 mod radio_tab;
 mod rx_log;

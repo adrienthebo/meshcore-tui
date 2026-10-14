@@ -90,13 +90,17 @@ impl Ui {
         }
     }
 
-    /// The keys that work right now: the tab's, then the ones every tab shares
+    /// The keys that work right now: the tab's, then the ones every tab shares;
+    /// Esc quits unless the tab names a use for it
     pub fn key_hints(&self) -> Vec<&'static str> {
         let mut hints = self.active_tab().key_hints();
+        let tab_uses_esc = hints.iter().any(|hint| hint.starts_with("Esc="));
         if self.tabs.len() > 1 {
             hints.push("F#=tab");
         }
-        hints.push("Esc=quit");
+        if !tab_uses_esc {
+            hints.push("Esc=quit");
+        }
         hints
     }
 
@@ -171,6 +175,9 @@ mod tests {
                 _ => KeyResult::Ignored,
             }
         }
+        fn key_hints(&self) -> Vec<&'static str> {
+            vec!["Esc=close"]
+        }
     }
 
     #[test]
@@ -186,6 +193,13 @@ mod tests {
             ui.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &app),
             Some(Action::Quit)
         );
+    }
+
+    #[test]
+    fn key_hints_leave_out_quit_when_the_tab_uses_esc() {
+        let mut ui = test_ui();
+        ui.tabs = vec![Box::new(EscProbe)];
+        assert_eq!(ui.key_hints(), ["Esc=close"]);
     }
 
     #[test]
