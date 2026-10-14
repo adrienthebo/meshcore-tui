@@ -403,6 +403,12 @@ impl App {
         known
     }
 
+    /// Address messages to channel `ch`, clearing the contact selection
+    pub fn select_channel(&mut self, ch: u8) {
+        self.active_channel = ch;
+        self.selected_key = None;
+    }
+
     /// Replace the contact list, keeping the selection on the same contact
     pub fn set_contacts(&mut self, contacts: Vec<Contact>) {
         let selected_name = self.selected_contact().map(|c| sanitize(&c.adv_name));
