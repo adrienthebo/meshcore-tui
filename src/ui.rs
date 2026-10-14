@@ -1,3 +1,4 @@
+use meshcore_rs::PublicKey;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -247,55 +248,87 @@ pub fn draw_messages(f: &mut Frame, app: &App, theme: &Theme, focused: bool, are
     f.render_widget(msg_w, area);
 }
 
-pub fn draw_channels(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area: Rect) {
+/// The channels, marking the one messages go to and the row under `cursor`
+pub fn draw_channels(
+    f: &mut Frame,
+    app: &App,
+    cursor: Option<u8>,
+    theme: &Theme,
+    focused: bool,
+    area: Rect,
+) {
     let selected = app.selected_channel();
-    let rows: Vec<(String, bool)> = app
+    let rows: Vec<TargetRow> = app
         .channel_indexes()
         .into_iter()
-        .map(|idx| (app.channel_label(idx), selected == Some(idx)))
+        .map(|idx| TargetRow {
+            text: app.channel_label(idx),
+            target: selected == Some(idx),
+            cursor: cursor == Some(idx),
+        })
         .collect();
     draw_targets(f, theme, focused, area, "Channels", &rows);
 }
 
-pub fn draw_favorites(f: &mut Frame, app: &App, theme: &Theme, focused: bool, area: Rect) {
-    let rows: Vec<(String, bool)> = app
+/// The favourite contacts, marking the one messages go to and the row under `cursor`
+pub fn draw_favorites(
+    f: &mut Frame,
+    app: &App,
+    cursor: Option<PublicKey>,
+    theme: &Theme,
+    focused: bool,
+    area: Rect,
+) {
+    let rows: Vec<TargetRow> = app
         .favorites()
         .into_iter()
         .map(|c| {
             let hex = c.prefix_hex();
             let hex_short = &hex[..8.min(hex.len())];
-            let row = format!("{} ({})", sanitize(&c.adv_name), hex_short);
-            (row, app.selected_key == Some(c.public_key))
+            TargetRow {
+                text: format!("{} ({})", sanitize(&c.adv_name), hex_short),
+                target: app.selected_key == Some(c.public_key),
+                cursor: cursor == Some(c.public_key),
+            }
         })
         .collect();
     draw_targets(f, theme, focused, area, "Favorites", &rows);
 }
 
-/// A titled list of message targets, each row with whether messages go to it;
-/// rows are cut to the panel width
+/// A row in a list of message targets
+struct TargetRow {
+    text: String,
+    /// Messages go to this row
+    target: bool,
+    /// ↑↓ have moved to this row
+    cursor: bool,
+}
+
+/// A titled list of message targets; ▶ marks the target, a highlight marks
+/// the cursor, and rows are cut to the panel width
 fn draw_targets(
     f: &mut Frame,
     theme: &Theme,
     focused: bool,
     area: Rect,
     title: &str,
-    rows: &[(String, bool)],
+    rows: &[TargetRow],
 ) {
     let cpanel_width = (area.width as usize).saturating_sub(2); // minus borders
     let citems: Vec<ListItem> = rows
         .iter()
-        .map(|&(ref text, sel)| {
-            let sty = if sel {
-                Style::default()
-                    .fg(theme.selected_fg)
-                    .bg(theme.selected_bg)
-                    .add_modifier(Modifier::BOLD)
+        .map(|row| {
+            let mut sty = if row.cursor {
+                Style::default().fg(theme.selected_fg).bg(theme.selected_bg)
             } else {
                 Style::default().fg(theme.text)
             };
+            if row.target {
+                sty = sty.add_modifier(Modifier::BOLD);
+            }
             // Build the full line and truncate to exactly cpanel_width
-            let marker = if sel { "\u{25b6} " } else { "  " };
-            let full = format!("{}{}", marker, text);
+            let marker = if row.target { "\u{25b6} " } else { "  " };
+            let full = format!("{}{}", marker, row.text);
             let line = truncate_to_width(&full, cpanel_width);
 
             // Pad with spaces to fill the panel (needed for selection highlight)
@@ -755,15 +788,30 @@ mod tests {
         insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_channels(
             f,
             &app,
+            None,
             &Theme::CLASSIC,
             false,
             area
         )));
         app.select_contact(app.contacts[0].public_key);
         let rows = rows(&render_panel(24, 4, |f, area| {
-            draw_channels(f, &app, &Theme::CLASSIC, false, area)
+            draw_channels(f, &app, None, &Theme::CLASSIC, false, area)
         }));
         assert!(rows.iter().all(|row| !row.contains('\u{25b6}')));
+    }
+
+    #[test]
+    fn channels_highlight_the_cursor_row_apart_from_the_target() {
+        let app = connected_app();
+        let backend = render_panel(24, 4, |f, area| {
+            draw_channels(f, &app, Some(1), &Theme::CLASSIC, true, area)
+        });
+        let rows = rows(&backend);
+        let row_bg = |y: u16| backend.buffer()[(4, y)].bg;
+        assert!(rows[1].contains("\u{25b6} Public"), "{rows:?}");
+        assert_ne!(row_bg(1), Theme::CLASSIC.selected_bg);
+        assert!(!rows[2].contains('\u{25b6}'), "{rows:?}");
+        assert_eq!(row_bg(2), Theme::CLASSIC.selected_bg);
     }
 
     #[test]
@@ -774,6 +822,7 @@ mod tests {
         insta::assert_snapshot!(render_panel(24, 4, |f, area| draw_favorites(
             f,
             &app,
+            None,
             &Theme::CLASSIC,
             false,
             area
@@ -783,7 +832,7 @@ mod tests {
     #[test]
     fn favorites_leave_out_other_contacts() {
         let rows = rows(&render_panel(30, 5, |f, area| {
-            draw_favorites(f, &connected_app(), &Theme::CLASSIC, false, area)
+            draw_favorites(f, &connected_app(), None, &Theme::CLASSIC, false, area)
         }));
         assert!(rows[0].contains(" Favorites (1) "));
         assert!(!rows.iter().any(|row| row.contains("Bob")));
