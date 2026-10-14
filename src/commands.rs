@@ -146,11 +146,7 @@ fn find_command(name: &str) -> Option<&'static CommandSpec> {
 pub enum Command {
     Help,
     Contacts,
-    AddContact {
-        name: String,
-        public_key: PublicKey,
-        contact_type: u8,
-    },
+    AddContact(ContactToAdd),
     /// A biz card: a node's signed advert packet
     ImportContact(Vec<u8>),
     /// A contact's name or public key, resolved to a contact before it goes to the radio
@@ -174,6 +170,39 @@ pub enum Command {
     Name(String),
     Info,
     Quit,
+}
+
+/// A contact for the radio to store, with every field the radio keeps
+#[derive(Debug, Clone)]
+pub struct ContactToAdd(pub Contact);
+
+impl ContactToAdd {
+    /// A contact with no route, advert or position
+    fn named(name: String, public_key: PublicKey, contact_type: u8) -> Self {
+        Self(Contact {
+            public_key,
+            contact_type,
+            adv_name: name,
+            ..Default::default()
+        })
+    }
+}
+
+/// meshcore-rs's Contact doesn't implement PartialEq
+impl PartialEq for ContactToAdd {
+    fn eq(&self, other: &Self) -> bool {
+        let (a, b) = (&self.0, &other.0);
+        a.public_key == b.public_key
+            && a.contact_type == b.contact_type
+            && a.flags == b.flags
+            && a.path_len == b.path_len
+            && a.out_path == b.out_path
+            && a.adv_name == b.adv_name
+            && a.last_advert == b.last_advert
+            && a.adv_lat == b.adv_lat
+            && a.adv_lon == b.adv_lon
+            && a.last_modification_timestamp == b.last_modification_timestamp
+    }
 }
 
 fn parse_channel_index(arg: &str, spec: &CommandSpec) -> Result<u8, String> {
@@ -225,11 +254,11 @@ fn parse_add_contact(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     if name.is_empty() {
         return Err(spec.usage());
     }
-    Ok(Command::AddContact {
-        name: name.to_string(),
-        public_key: parse_public_key(key)?,
-        contact_type: COMPANION,
-    })
+    Ok(Command::AddContact(ContactToAdd::named(
+        name.to_string(),
+        parse_public_key(key)?,
+        COMPANION,
+    )))
 }
 
 /// A contact link's query: name, public_key and an optional numeric type
@@ -251,11 +280,9 @@ fn parse_contact_link(query: &str) -> Result<Command, String> {
         }
     }
     match (name, key) {
-        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact {
-            name,
-            public_key,
-            contact_type,
-        }),
+        (Some(name), Some(public_key)) if !name.is_empty() => Ok(Command::AddContact(
+            ContactToAdd::named(name, public_key, contact_type),
+        )),
         _ => Err("Contact link needs a name and public_key".to_string()),
     }
 }
@@ -372,11 +399,18 @@ impl App {
                 }
             }
             Command::Quit => self.should_quit = true,
-            // Adding a key that's already a contact would overwrite its name and type and reset its route
-            Command::AddContact { public_key, .. }
-                if self.contacts.iter().any(|c| c.public_key == public_key) =>
+            // Adding a key that's already a contact would overwrite what the radio stores for it,
+            // such as its name, type and route
+            Command::AddContact(ContactToAdd(contact))
+                if self
+                    .contacts
+                    .iter()
+                    .any(|c| c.public_key == contact.public_key) =>
             {
-                let existing = self.contacts.iter().find(|c| c.public_key == public_key);
+                let existing = self
+                    .contacts
+                    .iter()
+                    .find(|c| c.public_key == contact.public_key);
                 let name = existing.map(|c| sanitize(&c.adv_name)).unwrap_or_default();
                 self.err(&format!("That key is already a contact: {}", name));
             }
@@ -457,29 +491,34 @@ async fn set_channel(
     Ok(secret)
 }
 
-/// Add a contact with no route, then reload the contact list to show it
-async fn add_contact(
-    mc: &MeshCore,
-    name: String,
-    public_key: PublicKey,
-    contact_type: u8,
-) -> Result<Outcome, String> {
-    let contact = Contact {
-        public_key,
-        contact_type,
-        adv_name: name.clone(),
-        ..Default::default()
-    };
+/// Add a contact, then reload the contact list to show it
+async fn add_contact(mc: &MeshCore, contact: Contact) -> Result<Outcome, String> {
     let commands = mc.commands().lock().await;
     commands
         .add_contact(&contact)
         .await
-        .map_err(|e| format!("Add contact: {}", e))?;
+        .map_err(add_contact_error)?;
     let contacts = commands
         .get_contacts(0)
         .await
         .map_err(|e| format!("Contacts: {}", e))?;
-    Ok(Outcome::ContactAdded { name, contacts })
+    Ok(Outcome::ContactAdded {
+        name: contact.adv_name,
+        contacts,
+    })
+}
+
+/// The firmware's ERR_CODE_TABLE_FULL (companion_radio/MyMesh.cpp), as meshcore-rs reports it
+const TABLE_FULL: &str = "code 3";
+
+/// Why the radio didn't add a contact; a full table is the one reason to spell out
+fn add_contact_error(e: meshcore_rs::Error) -> String {
+    match e {
+        meshcore_rs::Error::Device(code) if code == TABLE_FULL => {
+            "Add contact: the radio's contact table is full".to_string()
+        }
+        e => format!("Add contact: {}", e),
+    }
 }
 
 /// Remove a contact, then reload the contact list without it
@@ -553,11 +592,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             .await
             .map(Outcome::Contacts)
             .map_err(|e| format!("Contacts: {}", e)),
-        Command::AddContact {
-            name,
-            public_key,
-            contact_type,
-        } => add_contact(mc, name, public_key, contact_type).await,
+        Command::AddContact(ContactToAdd(contact)) => add_contact(mc, contact).await,
         Command::ImportContact(card) => mc
             .commands()
             .lock()
@@ -698,6 +733,26 @@ impl App {
                 text: line.to_string(),
             }
         };
+        self.when_connected(effect)
+    }
+
+    /// Add a discovered node as a contact, as its latest advert described it
+    pub fn add_discovered(&mut self, key: &[u8; 32]) -> Option<Effect> {
+        let Some(node) = self
+            .discovered
+            .iter()
+            .find(|d| d.contact.public_key == *key)
+        else {
+            self.err("That node is no longer in the discovered list");
+            return None;
+        };
+        let cmd = Command::AddContact(ContactToAdd(node.contact.clone()));
+        let effect = Effect::Radio(self.apply_local(cmd)?);
+        self.when_connected(effect)
+    }
+
+    /// The effect, or None and an error when there's no radio to carry it out
+    fn when_connected(&mut self, effect: Effect) -> Option<Effect> {
         if !self.connected {
             self.err("Not connected");
             return None;
@@ -719,7 +774,7 @@ mod tests {
     use super::*;
     use crate::app::{MsgType, PacketKind};
     use crate::test_support::*;
-    use meshcore_rs::events::SelfInfo;
+    use meshcore_rs::events::{EventPayload, SelfInfo};
 
     // ── Slash commands ───────────────────────────────────────────────────────
 
@@ -816,11 +871,7 @@ mod tests {
     }
 
     fn add_contact(name: &str, contact_type: u8) -> Command {
-        Command::AddContact {
-            name: name.to_string(),
-            public_key: key(),
-            contact_type,
-        }
+        Command::AddContact(ContactToAdd::named(name.to_string(), key(), contact_type))
     }
 
     #[test]
@@ -909,6 +960,18 @@ mod tests {
         }));
         assert_eq!(last_message(&app), "Added contact Bob");
         assert_eq!(app.contacts.len(), 1);
+    }
+
+    #[test]
+    fn a_full_contact_table_is_spelled_out() {
+        assert_eq!(
+            add_contact_error(meshcore_rs::Error::device(TABLE_FULL)),
+            "Add contact: the radio's contact table is full"
+        );
+        assert_eq!(
+            add_contact_error(meshcore_rs::Error::device("code 6")),
+            "Add contact: Device error: code 6"
+        );
     }
 
     fn app_with_bob_and_bobby() -> App {
@@ -1273,6 +1336,55 @@ mod tests {
         assert_eq!(last_message(&app), "Not connected");
         assert!(app.submit("/public").is_none());
         assert_eq!(last_message(&app), "Switched to CH#0");
+    }
+
+    // ── Discovered nodes ─────────────────────────────────────────────────────
+
+    fn app_with_discovered_ridge() -> (App, Contact) {
+        let mut app = connected_app();
+        let mut ridge = contact("Ridge", [0xe5; 6]);
+        ridge.contact_type = 2;
+        ridge.path_len = 3;
+        ridge.adv_lat = 51_900_000;
+        app.apply_radio_event(EventPayload::Contact(ridge.clone()));
+        (app, ridge)
+    }
+
+    #[test]
+    fn adding_a_discovered_node_sends_its_advert_to_the_radio() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        let effect = app.add_discovered(&ridge.public_key);
+        assert!(matches!(
+            effect,
+            Some(Effect::Radio(Command::AddContact(ref added)))
+                if *added == ContactToAdd(ridge.clone())
+        ));
+    }
+
+    #[test]
+    fn adding_a_discovered_node_that_is_already_a_contact_is_refused() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        app.contacts.push(ridge.clone());
+        assert!(app.add_discovered(&ridge.public_key).is_none());
+        assert_eq!(last_message(&app), "That key is already a contact: Ridge");
+    }
+
+    #[test]
+    fn adding_a_node_no_longer_discovered_is_refused() {
+        let mut app = connected_app();
+        assert!(app.add_discovered(&[9; 32]).is_none());
+        assert_eq!(
+            last_message(&app),
+            "That node is no longer in the discovered list"
+        );
+    }
+
+    #[test]
+    fn adding_a_discovered_node_while_offline_is_refused() {
+        let (mut app, ridge) = app_with_discovered_ridge();
+        app.connected = false;
+        assert!(app.add_discovered(&ridge.public_key).is_none());
+        assert_eq!(last_message(&app), "Not connected");
     }
 
     // ── Radio outcomes ───────────────────────────────────────────────────────
