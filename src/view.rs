@@ -5,6 +5,7 @@ use crate::app::App;
 use crate::contacts_tab::ContactsTab;
 use crate::overview::Overview;
 use crate::radio_tab::RadioTab;
+use crate::repeaters_tab::RepeatersTab;
 use crate::rx_log_tab::RxLogTab;
 use crate::theme::Theme;
 use crate::update::Action;
@@ -39,9 +40,11 @@ pub enum KeyResult {
 
 /// What's on screen and how it looks; the radio, contacts and messages are on App
 pub struct Ui {
-    /// Every tab, in tab bar order
+    /// The tabs before the Repeaters tab, in tab bar order
     pub tabs: Vec<Box<dyn View>>,
-    /// Index of the tab on screen
+    /// The last tab, typed so other views can show a repeater on it
+    repeaters: RepeatersTab,
+    /// Index of the tab on screen; the Repeaters tab's is `tabs.len()`
     pub active: usize,
     pub theme: Theme,
 }
@@ -55,6 +58,7 @@ impl Ui {
                 Box::new(RadioTab),
                 Box::new(RxLogTab::default()),
             ],
+            repeaters: RepeatersTab::default(),
             active: 0,
             theme,
         }
@@ -65,8 +69,30 @@ impl Ui {
         self.active = 0;
     }
 
+    /// Show the Repeaters tab on the repeater with this public key
+    pub fn show_repeater(&mut self, key: [u8; 32]) {
+        self.repeaters.show(key);
+        self.active = self.tabs.len();
+    }
+
     pub fn active_tab(&self) -> &dyn View {
-        self.tabs[self.active].as_ref()
+        match self.tabs.get(self.active) {
+            Some(tab) => tab.as_ref(),
+            None => &self.repeaters,
+        }
+    }
+
+    fn active_tab_mut(&mut self) -> &mut dyn View {
+        match self.tabs.get_mut(self.active) {
+            Some(tab) => tab.as_mut(),
+            None => &mut self.repeaters,
+        }
+    }
+
+    /// Every tab's title, in tab bar order
+    pub fn tab_titles(&self) -> Vec<&str> {
+        let tabs = self.tabs.iter().map(|tab| tab.title());
+        tabs.chain([self.repeaters.title()]).collect()
     }
 
     /// Apply a key press; Ctrl-C and the F-keys come first, the rest go to the
@@ -82,7 +108,7 @@ impl Ui {
                 }
                 None
             }
-            _ => match self.tabs[self.active].handle_key(key, app) {
+            _ => match self.active_tab_mut().handle_key(key, app) {
                 KeyResult::Action(action) => Some(action),
                 KeyResult::Ignored if key.code == KeyCode::Esc => Some(Action::Quit),
                 KeyResult::Handled | KeyResult::Ignored => None,
@@ -95,9 +121,7 @@ impl Ui {
     pub fn key_hints(&self) -> Vec<&'static str> {
         let mut hints = self.active_tab().key_hints();
         let tab_uses_esc = hints.iter().any(|hint| hint.starts_with("Esc="));
-        if self.tabs.len() > 1 {
-            hints.push("F#=tab");
-        }
+        hints.push("F#=tab");
         if !tab_uses_esc {
             hints.push("Esc=quit");
         }
@@ -108,7 +132,7 @@ impl Ui {
     fn tab_for_f_key(&self, number: u8) -> Option<usize> {
         (number as usize)
             .checked_sub(1)
-            .filter(|&tab| tab < self.tabs.len())
+            .filter(|&tab| tab <= self.tabs.len())
     }
 }
 
@@ -199,7 +223,7 @@ mod tests {
     fn key_hints_leave_out_quit_when_the_tab_uses_esc() {
         let mut ui = test_ui();
         ui.tabs = vec![Box::new(EscProbe)];
-        assert_eq!(ui.key_hints(), ["Esc=close"]);
+        assert_eq!(ui.key_hints(), ["Esc=close", "F#=tab"]);
     }
 
     #[test]
@@ -208,15 +232,36 @@ mod tests {
         let app = App::new(0);
         ui.handle_key(key(KeyCode::F(2), KeyModifiers::NONE), &app);
         assert_eq!(ui.active_tab().title(), "Probe");
+        ui.handle_key(key(KeyCode::F(3), KeyModifiers::NONE), &app);
+        assert_eq!(ui.active_tab().title(), "Repeaters");
         ui.handle_key(key(KeyCode::F(1), KeyModifiers::NONE), &app);
         assert_eq!(ui.active_tab().title(), "Overview");
+    }
+
+    #[test]
+    fn the_repeaters_tab_is_last_and_gets_keys() {
+        let mut ui = test_ui();
+        let app = App::new(0);
+        assert_eq!(
+            ui.tab_titles(),
+            ["Overview", "Contacts", "Radio", "RX Log", "Repeaters"]
+        );
+        ui.handle_key(key(KeyCode::F(5), KeyModifiers::NONE), &app);
+        assert_eq!(
+            ui.key_hints(),
+            ["↑↓=browse", "r=status", "F#=tab", "Esc=quit"]
+        );
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
     fn f_keys_without_a_tab_change_nothing() {
         let mut ui = ui_with_probe();
         let app = App::new(0);
-        for number in [0, 3, 12] {
+        for number in [0, 4, 12] {
             assert_eq!(
                 ui.handle_key(key(KeyCode::F(number), KeyModifiers::NONE), &app),
                 None
@@ -234,10 +279,6 @@ mod tests {
         );
         ui.active = 1;
         assert_eq!(ui.key_hints(), ["F#=tab", "Esc=quit"]);
-        // With one tab there's nothing to switch to
-        ui.tabs.truncate(1);
-        ui.active = 0;
-        assert_eq!(ui.key_hints(), ["Enter=send", "Tab=panel", "Esc=quit"]);
     }
 
     #[test]

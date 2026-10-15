@@ -90,7 +90,7 @@ impl View for ContactsTab {
             (KeyCode::Up, Section::Table) => self.browse(app, Step::Up),
             (KeyCode::Down, Section::Table) => self.browse(app, Step::Down),
             (KeyCode::Enter, Section::Table) => match self.browsed_contact(app) {
-                Some(contact) => self.menu = Some(ContactMenu::new(contact)),
+                Some(contact) => self.menu = Some(ContactMenu::new(contact, app)),
                 None => return KeyResult::Ignored,
             },
             (KeyCode::Up, Section::Discovered) => self.browse_discovered(app, Step::Up),
@@ -120,7 +120,7 @@ impl View for ContactsTab {
     }
 }
 
-enum Step {
+pub enum Step {
     Up,
     Down,
 }

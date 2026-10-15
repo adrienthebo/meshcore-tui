@@ -63,6 +63,10 @@ pub enum Action {
         key: [u8; 32],
         password: String,
     },
+    /// Show the repeater with this public key on the Repeaters tab
+    ShowRepeater([u8; 32]),
+    /// Ask the repeater with this public key for its status
+    RequestStatus([u8; 32]),
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
@@ -121,6 +125,8 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
             }
             return effects;
         }
+        Action::ShowRepeater(key) => ui.show_repeater(key),
+        Action::RequestStatus(key) => return app.request_status(key).into_iter().collect(),
     }
     Vec::new()
 }
@@ -276,6 +282,31 @@ mod tests {
         apply_action(&mut app, &mut ui, Action::MessageContact([9; 32]));
         assert_eq!(app.selected_key, None);
         assert_eq!(ui.active, 1);
+        assert_eq!(last_message(&app), "That contact is no longer in the list");
+    }
+
+    #[test]
+    fn show_repeater_shows_the_repeaters_tab() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        ui.active = 1;
+        let effects = apply_action(&mut app, &mut ui, Action::ShowRepeater([9; 32]));
+        assert!(effects.is_empty());
+        assert_eq!(ui.active_tab().title(), "Repeaters");
+    }
+
+    #[test]
+    fn request_status_asks_the_radio_once_connected() {
+        let (mut app, mut ui) = (app_with_contacts(2), test_ui());
+        let key = app.contacts[1].public_key;
+        assert!(apply_action(&mut app, &mut ui, Action::RequestStatus(key)).is_empty());
+        assert_eq!(last_message(&app), "Not connected");
+        app.connected = true;
+        let effects = apply_action(&mut app, &mut ui, Action::RequestStatus(key));
+        assert!(matches!(
+            &effects[..],
+            [Effect::Radio(Command::SendStatusRequest(public_key))] if *public_key == key
+        ));
+        assert!(apply_action(&mut app, &mut ui, Action::RequestStatus([9; 32])).is_empty());
         assert_eq!(last_message(&app), "That contact is no longer in the list");
     }
 

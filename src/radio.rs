@@ -189,6 +189,8 @@ pub async fn setup_subscriptions(mc: &MeshCore, events: UnboundedSender<EventPay
         // Room server login replies (0x85, 0x86)
         EventType::LoginSuccess,
         EventType::LoginFailed,
+        // Repeater status replies (0x87, or 0x8C to a status request)
+        EventType::StatusResponse,
     ];
     for event_type in event_types {
         let events = events.clone();
@@ -217,12 +219,25 @@ pub async fn run_radio_effects(
             // The main loop handles alerts itself
             Effect::Alert => continue,
         };
-        if let Ok(Outcome::LoginSent {
-            public_key,
-            timeout_ms,
-        }) = &outcome
-        {
-            report_login_timeout(outcomes.clone(), *public_key, *timeout_ms);
+        match &outcome {
+            Ok(Outcome::LoginSent {
+                public_key,
+                timeout_ms,
+            }) => report_timeout(
+                outcomes.clone(),
+                *timeout_ms,
+                Outcome::LoginTimedOut(*public_key),
+            ),
+            Ok(Outcome::StatusRequested {
+                public_key,
+                timeout_ms,
+            }) => report_timeout(
+                outcomes.clone(),
+                *timeout_ms,
+                Outcome::StatusTimedOut(*public_key),
+            ),
+            // Other outcomes don't wait on a reply
+            _ => {}
         }
         if outcomes.send(outcome).is_err() {
             // The main loop has exited
@@ -231,18 +246,19 @@ pub async fn run_radio_effects(
     }
 }
 
-/// Report a login's timeout once the radio's estimate for the round trip has
-/// passed; a room server doesn't answer a wrong password. Waits in its own task
-/// so other radio work isn't held up.
-fn report_login_timeout(
+/// Report `timed_out` once the radio's estimate for a request's round trip has
+/// passed; a room server doesn't answer a wrong password, and a repeater out of
+/// range doesn't answer at all. Waits in its own task so other radio work isn't
+/// held up.
+fn report_timeout(
     outcomes: UnboundedSender<Result<Outcome, String>>,
-    public_key: [u8; 32],
     timeout_ms: u32,
+    timed_out: Outcome,
 ) {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(timeout_ms.into())).await;
         // Sending only fails once the main loop has exited
-        let _ = outcomes.send(Ok(Outcome::LoginTimedOut(public_key)));
+        let _ = outcomes.send(Ok(timed_out));
     });
 }
 

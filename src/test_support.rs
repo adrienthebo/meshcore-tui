@@ -1,6 +1,6 @@
 use meshcore_rs::events::{
     BatteryInfo, ChannelMessage, Contact, ContactMessage, CoreStatsData, LogData, MeshPacketHeader,
-    PacketStatsData, RadioStatsData, RawAdvertisement,
+    PacketStatsData, RadioStatsData, RawAdvertisement, StatusData,
 };
 use meshcore_rs::{PayloadType, RouteType};
 
@@ -69,6 +69,34 @@ pub fn diagnostics_reading() -> DiagnosticsReading {
             radio: 1_791_719_995,
             host: 1_791_720_000,
         }),
+    }
+}
+
+/// A repeater's status from the node with key prefix `sender_prefix`: up
+/// 3d4h12m, battery 4.12 V, 11 receive errors
+#[allow(deprecated)] // for dup_count, a required field
+pub fn repeater_status(sender_prefix: [u8; 6]) -> StatusData {
+    StatusData {
+        battery_mv: 4120,
+        tx_queue_len: 0,
+        noise_floor: -118,
+        last_rssi: -92,
+        nb_recv: 8408,
+        nb_sent: 1292,
+        airtime: 1800,
+        uptime: 274_320,
+        flood_sent: 1204,
+        direct_sent: 88,
+        flood_recv: 8311,
+        direct_recv: 97,
+        err_events: 0,
+        snr: -7.5,
+        dup_count: 415,
+        direct_dups: 3,
+        flood_dups: 412,
+        rx_airtime: 8040,
+        recv_errors: Some(11),
+        sender_prefix,
     }
 }
 

@@ -18,6 +18,8 @@ enum Choice {
     Message,
     /// Ask for the password to log in to a repeater or room server
     LogIn,
+    /// Show the repeater on the Repeaters tab
+    Status,
     /// Mark the contact as a favorite (true) or unmark it
     Favorite(bool),
     /// Ask whether to delete the contact
@@ -41,13 +43,18 @@ fn confirm_rows() -> Vec<Row<Confirm>> {
 
 /// The menu for a contact of this type (ADV_TYPE_*, helpers/AdvertDataHelpers.h):
 /// what only that type offers, a divider, then what every contact offers.
-/// Actions that aren't built yet show disabled
-fn rows(contact_type: u8, favorite: bool) -> Vec<Row<Choice>> {
+/// Actions that aren't built yet show disabled, and so does a repeater's
+/// Status until we're logged in to it
+fn rows(contact_type: u8, favorite: bool, logged_in: bool) -> Vec<Row<Choice>> {
     let mut rows = match contact_type {
         1 => vec![Row::Enabled("Message", Choice::Message)],
         2 => vec![
             Row::Enabled("Log in", Choice::LogIn),
-            Row::Disabled("Status"),
+            if logged_in {
+                Row::Enabled("Status", Choice::Status)
+            } else {
+                Row::Disabled("Status")
+            },
         ],
         3 => vec![
             Row::Enabled("Log in", Choice::LogIn),
@@ -95,10 +102,11 @@ pub struct ContactMenu {
 }
 
 impl ContactMenu {
-    pub fn new(contact: &Contact) -> Self {
+    pub fn new(contact: &Contact, app: &App) -> Self {
+        let logged_in = app.logins.contains_key(&contact.public_key);
         Self {
             key: contact.public_key,
-            choices: Choices::new(rows(contact.contact_type, is_favorite(contact))),
+            choices: Choices::new(rows(contact.contact_type, is_favorite(contact), logged_in)),
             confirm: None,
             password: None,
         }
@@ -114,6 +122,7 @@ impl ContactMenu {
                 self.password = Some(InputLine::default());
                 KeyResult::Handled
             }
+            Choice::Status => KeyResult::Action(Action::ShowRepeater(key)),
             Choice::Favorite(favorite) => KeyResult::Action(Action::SetFavorite { key, favorite }),
             Choice::Delete => {
                 self.confirm = Some(Choices::new(confirm_rows()));
@@ -245,6 +254,7 @@ impl View for ContactMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Role;
     use crate::test_support::*;
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -256,7 +266,7 @@ mod tests {
     fn enter_asks_to_message_a_companion() {
         let app = app_with_contacts(2);
         let key = app.contacts[1].public_key;
-        let mut menu = ContactMenu::new(&app.contacts[1]);
+        let mut menu = ContactMenu::new(&app.contacts[1], &app);
         assert_eq!(
             press(&mut menu, &app, KeyCode::Enter),
             KeyResult::Action(Action::MessageContact(key))
@@ -272,32 +282,46 @@ mod tests {
         ];
         let with_shared = |own: &[Row<Choice>]| [own, &shared].concat();
         assert_eq!(
-            rows(1, false),
+            rows(1, false, false),
             with_shared(&[Row::Enabled("Message", Choice::Message)])
         );
         assert_eq!(
-            rows(2, false),
+            rows(2, false, false),
             with_shared(&[
                 Row::Enabled("Log in", Choice::LogIn),
                 Row::Disabled("Status")
             ])
         );
         assert_eq!(
-            rows(3, false),
+            rows(3, false, false),
             with_shared(&[
                 Row::Enabled("Log in", Choice::LogIn),
                 Row::Disabled("Read posts")
             ])
         );
         // Nothing of their own, so nothing to divide
-        assert_eq!(rows(4, false), shared[1..]);
-        assert_eq!(rows(0, false), shared[1..]);
+        assert_eq!(rows(4, false, false), shared[1..]);
+        assert_eq!(rows(0, false, false), shared[1..]);
+    }
+
+    #[test]
+    fn a_repeater_logged_in_to_offers_its_status() {
+        let mut app = app_with_contacts(1);
+        app.contacts[0].contact_type = 2;
+        let key = app.contacts[0].public_key;
+        app.logins.insert(key, Role::Guest);
+        let mut menu = ContactMenu::new(&app.contacts[0], &app);
+        press(&mut menu, &app, KeyCode::Down);
+        assert_eq!(
+            press(&mut menu, &app, KeyCode::Enter),
+            KeyResult::Action(Action::ShowRepeater(key))
+        );
     }
 
     #[test]
     fn a_favorite_offers_to_unfavorite() {
         assert_eq!(
-            rows(4, true),
+            rows(4, true, false),
             [
                 Row::Enabled("Unfavorite", Choice::Favorite(false)),
                 Row::Enabled("Delete", Choice::Delete),
@@ -307,7 +331,7 @@ mod tests {
 
     /// A menu for a lone companion, asking whether to delete it
     fn asking_to_delete(app: &App) -> ContactMenu {
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], app);
         press(&mut menu, app, KeyCode::Down);
         press(&mut menu, app, KeyCode::Down);
         assert_eq!(press(&mut menu, app, KeyCode::Enter), KeyResult::Handled);
@@ -360,7 +384,7 @@ mod tests {
     fn enter_on_favorite_asks_to_mark_the_contact() {
         let app = app_with_contacts(1);
         let key = app.contacts[0].public_key;
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], &app);
         press(&mut menu, &app, KeyCode::Down);
         assert_eq!(
             press(&mut menu, &app, KeyCode::Enter),
@@ -375,7 +399,7 @@ mod tests {
     fn enter_on_a_stub_does_nothing() {
         let mut app = app_with_contacts(1);
         app.contacts[0].contact_type = 2;
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], &app);
         assert_eq!(press(&mut menu, &app, KeyCode::Down), KeyResult::Handled);
         assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
         assert!(menu.password.is_none());
@@ -384,7 +408,7 @@ mod tests {
     /// A menu for a lone repeater, asking for the password
     fn asking_for_password(app: &mut App) -> ContactMenu {
         app.contacts[0].contact_type = 2;
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], app);
         assert_eq!(press(&mut menu, app, KeyCode::Enter), KeyResult::Handled);
         assert_eq!(menu.key_hints(), ["Enter=log in", "Esc=back"]);
         menu
@@ -455,7 +479,7 @@ mod tests {
     #[test]
     fn a_contact_that_has_gone_offers_nothing() {
         let mut app = app_with_contacts(1);
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], &app);
         app.contacts.clear();
         assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Ignored);
     }
@@ -463,7 +487,7 @@ mod tests {
     #[test]
     fn other_keys_are_not_the_menus() {
         let app = app_with_contacts(1);
-        let mut menu = ContactMenu::new(&app.contacts[0]);
+        let mut menu = ContactMenu::new(&app.contacts[0], &app);
         assert_eq!(press(&mut menu, &app, KeyCode::Tab), KeyResult::Ignored);
         assert_eq!(press(&mut menu, &app, KeyCode::Esc), KeyResult::Ignored);
     }

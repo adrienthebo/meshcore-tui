@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{Local, Utc};
 use meshcore_rs::events::{
     AdvertisementData, ChannelInfoData, ChannelMessage, Contact, ContactMessage, DeviceInfoData,
-    EventPayload, LoginSuccessData, MsgSentInfo, PathUpdateData, SelfInfo,
+    EventPayload, LoginSuccessData, MsgSentInfo, PathUpdateData, SelfInfo, StatusData,
 };
 
 use crate::commands::REPEATER;
@@ -37,7 +37,7 @@ impl Role {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Role::Admin => "admin",
             Role::ReadWrite => "read-write",
@@ -45,6 +45,23 @@ impl Role {
             Role::Guest => "guest",
         }
     }
+}
+
+/// What we've heard of a repeater's status
+#[derive(Debug, Default)]
+pub struct RepeaterStatus {
+    /// The latest status and the local time it arrived
+    pub latest: Option<(StatusData, String)>,
+    /// The latest request, while it's waiting or after it went unanswered
+    pub request: Option<StatusRequest>,
+}
+
+/// Where a status request stands
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StatusRequest {
+    Waiting,
+    /// The radio's estimate for the round trip passed without a reply
+    Unanswered,
 }
 
 /// Stored channel info
@@ -186,6 +203,8 @@ pub struct App {
     pub logins: HashMap<[u8; 32], Role>,
     /// Repeaters and room servers we sent a login to and haven't heard back from
     pending_logins: HashSet<[u8; 32]>,
+    /// Repeaters we've asked for their status, by public key
+    pub statuses: HashMap<[u8; 32], RepeaterStatus>,
     pub should_quit: bool,
 }
 
@@ -213,6 +232,7 @@ impl App {
             rx_log: RxLog::default(),
             logins: HashMap::new(),
             pending_logins: HashSet::new(),
+            statuses: HashMap::new(),
             should_quit: false,
         }
     }
@@ -316,6 +336,10 @@ impl App {
                 self.on_login_failed(&pubkey_prefix);
                 false
             }
+            EventPayload::Status(status) => {
+                self.on_status(status);
+                false
+            }
             // meshcore-rs defines many payloads the app doesn't subscribe to
             _ => false,
         }
@@ -359,6 +383,30 @@ impl App {
             self.logins.remove(&key);
         }
         self.err(&format!("Login to {} refused", name));
+    }
+
+    /// The radio sent a status request to a repeater; the reply comes as a push
+    pub fn on_status_requested(&mut self, public_key: [u8; 32]) {
+        self.statuses.entry(public_key).or_default().request = Some(StatusRequest::Waiting);
+    }
+
+    /// A status request's wait ran out; marks it unanswered only if no reply came
+    pub fn on_status_timed_out(&mut self, public_key: [u8; 32]) {
+        if let Some(status) = self.statuses.get_mut(&public_key) {
+            if status.request == Some(StatusRequest::Waiting) {
+                status.request = Some(StatusRequest::Unanswered);
+            }
+        }
+    }
+
+    /// A repeater's status arrived; one from a node that isn't a contact is dropped
+    fn on_status(&mut self, status: StatusData) {
+        let Some(key) = self.contact_key(&status.sender_prefix) else {
+            return;
+        };
+        let entry = self.statuses.entry(key).or_default();
+        entry.latest = Some((status, now()));
+        entry.request = None;
     }
 
     /// The contact whose key starts with `prefix`
@@ -730,6 +778,43 @@ mod tests {
         assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
         assert_eq!(last_message(&app), "Login to Room refused");
         assert!(!app.logins.contains_key(&key));
+    }
+
+    #[test]
+    fn a_status_reply_replaces_the_wait() {
+        let mut app = App::new(0);
+        let repeater = contact("Hilltop", [4; 6]);
+        let key = repeater.public_key;
+        app.contacts.push(repeater);
+        app.on_status_requested(key);
+        assert_eq!(app.statuses[&key].request, Some(StatusRequest::Waiting));
+        assert!(!app.apply_radio_event(EventPayload::Status(repeater_status([4; 6]))));
+        let status = &app.statuses[&key];
+        assert_eq!(status.request, None);
+        assert_eq!(status.latest.as_ref().unwrap().0.uptime, 274_320);
+        app.on_status_timed_out(key);
+        assert_eq!(app.statuses[&key].request, None);
+    }
+
+    #[test]
+    fn an_unanswered_status_request_keeps_the_last_status() {
+        let mut app = App::new(0);
+        let repeater = contact("Hilltop", [4; 6]);
+        let key = repeater.public_key;
+        app.contacts.push(repeater);
+        app.apply_radio_event(EventPayload::Status(repeater_status([4; 6])));
+        app.on_status_requested(key);
+        app.on_status_timed_out(key);
+        let status = &app.statuses[&key];
+        assert_eq!(status.request, Some(StatusRequest::Unanswered));
+        assert!(status.latest.is_some());
+    }
+
+    #[test]
+    fn a_status_from_a_stranger_is_dropped() {
+        let mut app = App::new(0);
+        app.apply_radio_event(EventPayload::Status(repeater_status([0; 6])));
+        assert!(app.statuses.is_empty());
     }
 
     #[test]

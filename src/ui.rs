@@ -40,7 +40,7 @@ pub fn draw(f: &mut Frame, app: &App, ui: &Ui) {
 /// Each tab's title, numbered with the F-key that shows it, and the
 /// keys that work right now at the right end of the rule
 fn draw_tab_bar(f: &mut Frame, ui: &Ui, area: Rect) {
-    let titles: Vec<&str> = ui.tabs.iter().map(|tab| tab.title()).collect();
+    let titles = ui.tab_titles();
     let bar = TabBar::new(&titles, ui.active)
         .active_style(Style::default().fg(ui.theme.focus))
         .rule_style(Style::default().fg(ui.theme.muted));
@@ -704,7 +704,7 @@ mod tests {
     /// Full-screen layout check; expect to re-accept this when the layout changes
     #[test]
     fn render_connected_chat() {
-        insta::assert_snapshot!(render(&connected_app(), 80, 24));
+        insta::assert_snapshot!(render(&connected_app(), 100, 24));
     }
 
     #[test]
@@ -1004,7 +1004,7 @@ mod tests {
             focus: Panel::Channels,
             ..Overview::default()
         });
-        let backend = render_panel(80, 24, |f, _| draw(f, &app, &ui));
+        let backend = render_panel(100, 24, |f, _| draw(f, &app, &ui));
         let buffer = backend.buffer();
         // Status border, the current tab's outline over the muted rule and the key
         // hints at its end, then the focused channels border and the unfocused
@@ -1013,8 +1013,8 @@ mod tests {
         assert_eq!(buffer[(1, 3)].fg, ui.theme.focus);
         assert_eq!(buffer[(1, 4)].fg, ui.theme.focus);
         assert_eq!(buffer[(20, 4)].fg, ui.theme.muted);
-        assert_eq!(buffer[(78, 4)].fg, ui.theme.text);
-        assert_eq!(buffer[(79, 5)].fg, ui.theme.focus);
+        assert_eq!(buffer[(98, 4)].fg, ui.theme.text);
+        assert_eq!(buffer[(99, 5)].fg, ui.theme.focus);
         assert_eq!(buffer[(0, 5)].fg, ui.theme.messages_border);
     }
 

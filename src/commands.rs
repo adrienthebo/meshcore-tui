@@ -1,5 +1,5 @@
 use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo, RadioStatsData};
-use meshcore_rs::{MeshCore, PublicKey};
+use meshcore_rs::{BinaryReqType, MeshCore, PublicKey};
 
 use crate::app::{with_favorite, App, ChannelEntry};
 use crate::stats::{DiagnosticsReading, PollNotice};
@@ -175,6 +175,8 @@ pub enum Command {
         public_key: PublicKey,
         password: String,
     },
+    /// Ask the repeater with this public key for its status
+    SendStatusRequest(PublicKey),
     To(String),
     SwitchChannel(u8),
     Public,
@@ -254,7 +256,7 @@ const COMPANION: u8 = 1;
 pub const REPEATER: u8 = 2;
 
 /// Contact type for a room server (ADV_TYPE_ROOM)
-const ROOM: u8 = 3;
+pub const ROOM: u8 = 3;
 
 /// Which contacts a command can pick
 #[derive(Clone, Copy)]
@@ -674,6 +676,21 @@ async fn send_login(
     })
 }
 
+/// Send a status request; the repeater's reply comes later as a push
+async fn send_status_request(mc: &MeshCore, public_key: PublicKey) -> Result<Outcome, String> {
+    let info = mc
+        .commands()
+        .lock()
+        .await
+        .send_binary_req(&public_key[..], BinaryReqType::Status)
+        .await
+        .map_err(|e| format!("Status: {}", e))?;
+    Ok(Outcome::StatusRequested {
+        public_key,
+        timeout_ms: info.suggested_timeout,
+    })
+}
+
 /// What the radio returned for a command or sent message, for the app to apply
 #[derive(Debug)]
 pub enum Outcome {
@@ -701,6 +718,13 @@ pub enum Outcome {
     },
     /// A login's wait for a reply ran out
     LoginTimedOut(PublicKey),
+    /// The radio sent a status request; the radio estimates the reply within `timeout_ms`
+    StatusRequested {
+        public_key: PublicKey,
+        timeout_ms: u32,
+    },
+    /// A status request's wait for a reply ran out
+    StatusTimedOut(PublicKey),
     AdvertSent,
     Battery(BatteryInfo),
     NameSet(String),
@@ -757,6 +781,7 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             public_key,
             password,
         } => send_login(mc, public_key, &password).await,
+        Command::SendStatusRequest(public_key) => send_status_request(mc, public_key).await,
         Command::Advert => mc
             .commands()
             .lock()
@@ -833,6 +858,8 @@ impl App {
             }
             Outcome::LoginSent { public_key, .. } => self.on_login_sent(public_key),
             Outcome::LoginTimedOut(public_key) => self.on_login_timed_out(public_key),
+            Outcome::StatusRequested { public_key, .. } => self.on_status_requested(public_key),
+            Outcome::StatusTimedOut(public_key) => self.on_status_timed_out(public_key),
             Outcome::AdvertSent => self.sys("Advertisement sent"),
             Outcome::Battery(b) => {
                 self.battery_level = Some(b.battery_mv);
@@ -949,6 +976,15 @@ impl App {
             public_key,
             password,
         }))
+    }
+
+    /// Ask the repeater with this public key for its status
+    pub fn request_status(&mut self, public_key: PublicKey) -> Option<Effect> {
+        if !self.contacts.iter().any(|c| c.public_key == public_key) {
+            self.err("That contact is no longer in the list");
+            return None;
+        }
+        self.when_connected(Effect::Radio(Command::SendStatusRequest(public_key)))
     }
 
     /// The effect, or None and an error when there's no radio to carry it out

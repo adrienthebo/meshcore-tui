@@ -1,0 +1,12 @@
+---
+source: src/repeaters_tab.rs
+expression: "render(&App::new(0), &RepeatersTab::default())"
+---
+"╭ Logged in (0) ───────────╮╭ Status ──────────────────────────────────────────╮"
+"│                          ││Not logged in to any repeater. Log in from a      │"
+"│                          ││repeater's menu in Contacts, or with /login <name>│"
+"│                          ││[password].                                       │"
+"│                          ││                                                  │"
+"│                          ││                                                  │"
+"│                          ││                                                  │"
+"╰──────────────────────────╯╰──────────────────────────────────────────────────╯"
