@@ -69,10 +69,10 @@ impl Ui {
         self.tabs[self.active].as_ref()
     }
 
-    /// Apply a key press; keys every tab shares come first, the rest go to the tab on screen
+    /// Apply a key press; Ctrl-C and the F-keys come first, the rest go to the
+    /// tab on screen, and Esc quits only when the tab doesn't use it
     pub fn handle_key(&mut self, key: KeyEvent, app: &App) -> Option<Action> {
         match key.code {
-            KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(Action::Quit)
             }
@@ -84,18 +84,23 @@ impl Ui {
             }
             _ => match self.tabs[self.active].handle_key(key, app) {
                 KeyResult::Action(action) => Some(action),
+                KeyResult::Ignored if key.code == KeyCode::Esc => Some(Action::Quit),
                 KeyResult::Handled | KeyResult::Ignored => None,
             },
         }
     }
 
-    /// The keys that work right now: the tab's, then the ones every tab shares
+    /// The keys that work right now: the tab's, then the ones every tab shares;
+    /// Esc quits unless the tab names a use for it
     pub fn key_hints(&self) -> Vec<&'static str> {
         let mut hints = self.active_tab().key_hints();
+        let tab_uses_esc = hints.iter().any(|hint| hint.starts_with("Esc="));
         if self.tabs.len() > 1 {
             hints.push("F#=tab");
         }
-        hints.push("Esc=quit");
+        if !tab_uses_esc {
+            hints.push("Esc=quit");
+        }
         hints
     }
 
@@ -154,6 +159,47 @@ mod tests {
                 Some(Action::Quit)
             );
         }
+    }
+
+    /// A tab that uses Esc, as one with a popover open does
+    struct EscProbe;
+
+    impl View for EscProbe {
+        fn title(&self) -> &str {
+            "EscProbe"
+        }
+        fn draw(&self, _: &mut Frame, _: Rect, _: &App, _: &Theme, _: bool) {}
+        fn handle_key(&mut self, key: KeyEvent, _: &App) -> KeyResult {
+            match key.code {
+                KeyCode::Esc => KeyResult::Handled,
+                _ => KeyResult::Ignored,
+            }
+        }
+        fn key_hints(&self) -> Vec<&'static str> {
+            vec!["Esc=close"]
+        }
+    }
+
+    #[test]
+    fn a_tab_that_uses_esc_keeps_it_from_quitting() {
+        let mut ui = test_ui();
+        ui.tabs = vec![Box::new(EscProbe)];
+        let app = App::new(0);
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app),
+            None
+        );
+        assert_eq!(
+            ui.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &app),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn key_hints_leave_out_quit_when_the_tab_uses_esc() {
+        let mut ui = test_ui();
+        ui.tabs = vec![Box::new(EscProbe)];
+        assert_eq!(ui.key_hints(), ["Esc=close"]);
     }
 
     #[test]
