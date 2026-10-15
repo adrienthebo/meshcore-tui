@@ -15,6 +15,7 @@ use crate::contacts_tab::Step;
 use crate::text::sanitize;
 use crate::theme::Theme;
 use crate::ui::panel;
+use crate::update::Action;
 use crate::view::{KeyResult, View};
 
 /// The repeaters we're logged in to, beside the shown one's status
@@ -43,18 +44,27 @@ impl View for RepeatersTab {
         draw_repeaters_tab(f, app, self, theme, area);
     }
 
-    /// ↑↓ browse the repeaters
+    /// ↑↓ browse the repeaters; r asks the shown one for its status
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         match key.code {
             KeyCode::Up => self.browse(app, Step::Up),
             KeyCode::Down => self.browse(app, Step::Down),
+            KeyCode::Char('r') => {
+                let repeaters = logged_in(app);
+                return match self.shown_row(&repeaters) {
+                    Some(row) => {
+                        KeyResult::Action(Action::RequestStatus(repeaters[row].0.public_key))
+                    }
+                    None => KeyResult::Handled,
+                };
+            }
             _ => return KeyResult::Ignored,
         }
         KeyResult::Handled
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
-        vec!["↑↓=browse"]
+        vec!["↑↓=browse", "r=status"]
     }
 }
 
@@ -234,6 +244,25 @@ mod tests {
         press(&mut tab, &app, KeyCode::Up);
         assert_eq!(shown_name(&tab, &app), "Beacon");
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+    }
+
+    #[test]
+    fn r_requests_the_shown_repeaters_status() {
+        let app = app_with_logins();
+        let mut tab = RepeatersTab::default();
+        tab.show(app.contacts[0].public_key);
+        assert_eq!(
+            press(&mut tab, &app, KeyCode::Char('r')),
+            KeyResult::Action(Action::RequestStatus(app.contacts[0].public_key))
+        );
+        assert_eq!(
+            press(
+                &mut RepeatersTab::default(),
+                &App::new(0),
+                KeyCode::Char('r')
+            ),
+            KeyResult::Handled
+        );
     }
 
     #[test]

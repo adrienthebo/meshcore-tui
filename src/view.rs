@@ -247,7 +247,10 @@ mod tests {
             ["Overview", "Contacts", "Radio", "RX Log", "Repeaters"]
         );
         ui.handle_key(key(KeyCode::F(5), KeyModifiers::NONE), &app);
-        assert_eq!(ui.key_hints(), ["↑↓=browse", "F#=tab", "Esc=quit"]);
+        assert_eq!(
+            ui.key_hints(),
+            ["↑↓=browse", "r=status", "F#=tab", "Esc=quit"]
+        );
         assert_eq!(
             ui.handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &app),
             Some(Action::Quit)
