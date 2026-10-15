@@ -621,6 +621,23 @@ mod tests {
     }
 
     #[test]
+    fn logging_in_from_the_menu_masks_the_password_then_closes_it() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        press(&mut tab, &app, KeyCode::Enter);
+        press(&mut tab, &app, KeyCode::Char('p'));
+        press(&mut tab, &app, KeyCode::Char('w'));
+        insta::assert_snapshot!(render(&app, &tab, 80, 26));
+        assert!(matches!(
+            press(&mut tab, &app, KeyCode::Enter),
+            KeyResult::Action(Action::Login { password, .. }) if password == "pw"
+        ));
+        assert!(tab.menu.is_none());
+    }
+
+    #[test]
     fn a_menu_whose_contact_has_gone_closes_on_the_next_key() {
         let (mut tab, mut app) = (ContactsTab::default(), app_with_heard_contacts());
         press(&mut tab, &app, KeyCode::Down);

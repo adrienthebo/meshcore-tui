@@ -288,7 +288,7 @@ impl Kind {
 }
 
 /// The firmware sends at most this much of a login password (BaseChatMesh::sendLogin)
-const MAX_PASSWORD_LEN: usize = 15;
+pub const MAX_PASSWORD_LEN: usize = 15;
 
 /// "<server> [password]": the server is the first word, the password the rest
 fn parse_login(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
@@ -937,6 +937,18 @@ impl App {
         };
         let name = contact.adv_name.clone();
         self.when_connected(Effect::Radio(Command::RemoveContact { name, public_key }))
+    }
+
+    /// Log in to the repeater or room server with this public key
+    pub fn login(&mut self, public_key: PublicKey, password: String) -> Option<Effect> {
+        if !self.contacts.iter().any(|c| c.public_key == public_key) {
+            self.err("That contact is no longer in the list");
+            return None;
+        }
+        self.when_connected(Effect::Radio(Command::SendLogin {
+            public_key,
+            password,
+        }))
     }
 
     /// The effect, or None and an error when there's no radio to carry it out

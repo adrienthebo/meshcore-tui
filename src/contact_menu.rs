@@ -1,9 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use meshcore_rs::events::Contact;
-use ratatui::{layout::Rect, Frame};
+use ratatui::{layout::Rect, widgets::Paragraph, Frame};
 
 use crate::app::{is_favorite, App};
 use crate::choices::{Choices, ChoicesKey, Row};
+use crate::commands::MAX_PASSWORD_LEN;
+use crate::input::InputLine;
 use crate::popover::Popover;
 use crate::text::sanitize;
 use crate::theme::Theme;
@@ -14,6 +16,8 @@ use crate::view::{KeyResult, View};
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Choice {
     Message,
+    /// Ask for the password to log in to a repeater or room server
+    LogIn,
     /// Mark the contact as a favorite (true) or unmark it
     Favorite(bool),
     /// Ask whether to delete the contact
@@ -41,8 +45,14 @@ fn confirm_rows() -> Vec<Row<Confirm>> {
 fn rows(contact_type: u8, favorite: bool) -> Vec<Row<Choice>> {
     let mut rows = match contact_type {
         1 => vec![Row::Enabled("Message", Choice::Message)],
-        2 => vec![Row::Disabled("Log in"), Row::Disabled("Status")],
-        3 => vec![Row::Disabled("Log in"), Row::Disabled("Read posts")],
+        2 => vec![
+            Row::Enabled("Log in", Choice::LogIn),
+            Row::Disabled("Status"),
+        ],
+        3 => vec![
+            Row::Enabled("Log in", Choice::LogIn),
+            Row::Disabled("Read posts"),
+        ],
         _ => Vec::new(),
     };
     if !rows.is_empty() {
@@ -70,7 +80,8 @@ fn draw_choices<T: Copy>(
 }
 
 /// The things to do with one contact, drawn as a popover; ↑↓ choose and Enter
-/// asks for the chosen one. Delete asks first, and Esc goes back from asking
+/// asks for the chosen one. Delete asks first, Log in asks for the password,
+/// and Esc goes back from asking
 #[derive(Debug)]
 pub struct ContactMenu {
     /// The contact's public key; the menu draws nothing and chooses nothing
@@ -79,6 +90,8 @@ pub struct ContactMenu {
     choices: Choices<Choice>,
     /// Whether to delete the contact, while the menu is asking
     confirm: Option<Choices<Confirm>>,
+    /// The login password, while the menu is asking for it
+    password: Option<InputLine>,
 }
 
 impl ContactMenu {
@@ -87,14 +100,20 @@ impl ContactMenu {
             key: contact.public_key,
             choices: Choices::new(rows(contact.contact_type, is_favorite(contact))),
             confirm: None,
+            password: None,
         }
     }
 
-    /// What choosing does: ask for an action, or ask whether to delete
+    /// What choosing does: ask for an action, ask whether to delete, or ask
+    /// for the password
     fn choose(&mut self, choice: Choice) -> KeyResult {
         let key = self.key;
         match choice {
             Choice::Message => KeyResult::Action(Action::MessageContact(key)),
+            Choice::LogIn => {
+                self.password = Some(InputLine::default());
+                KeyResult::Handled
+            }
             Choice::Favorite(favorite) => KeyResult::Action(Action::SetFavorite { key, favorite }),
             Choice::Delete => {
                 self.confirm = Some(Choices::new(confirm_rows()));
@@ -126,6 +145,35 @@ impl ContactMenu {
         }
     }
 
+    /// Keys while asking for the password: edit it, refusing chars past what
+    /// the firmware sends; Enter logs in, an empty password as guest, and Esc
+    /// goes back to the menu
+    fn handle_password_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        let gone = self.contact(app).is_none();
+        let Some(password) = &mut self.password else {
+            return KeyResult::Ignored;
+        };
+        match key.code {
+            KeyCode::Esc => self.password = None,
+            KeyCode::Enter if gone => return KeyResult::Ignored,
+            KeyCode::Enter => {
+                return KeyResult::Action(Action::Login {
+                    key: self.key,
+                    password: password.take(),
+                })
+            }
+            KeyCode::Char(c) if password.as_str().len() + c.len_utf8() > MAX_PASSWORD_LEN => {}
+            KeyCode::Char(c) => password.insert(c),
+            KeyCode::Backspace => password.backspace(),
+            KeyCode::Left => password.left(),
+            KeyCode::Right => password.right(),
+            KeyCode::Home => password.home(),
+            KeyCode::End => password.end(),
+            _ => return KeyResult::Ignored,
+        }
+        KeyResult::Handled
+    }
+
     /// The contact the menu is for, while it's in the contact list
     pub fn contact<'a>(&self, app: &'a App) -> Option<&'a Contact> {
         app.contacts.iter().find(|c| c.public_key == self.key)
@@ -138,8 +186,9 @@ impl View for ContactMenu {
     }
 
     /// A popover titled with the contact's name and key prefix, centered in
-    /// `area`; while asking whether to delete, the title asks instead
-    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, _focused: bool) {
+    /// `area`; while asking whether to delete or for the password, the title
+    /// asks instead. The password shows as one • per char
+    fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, focused: bool) {
         let Some(contact) = self.contact(app) else {
             return;
         };
@@ -148,6 +197,16 @@ impl View for ContactMenu {
             sanitize(&contact.adv_name),
             &contact.prefix_hex()[..8]
         );
+        if let Some(password) = &self.password {
+            let title = format!(" Log in to {name} ");
+            let inner = Popover::new(title, MAX_PASSWORD_LEN as u16, 1).render(f, area, theme);
+            let masked = "•".repeat(password.as_str().chars().count());
+            f.render_widget(Paragraph::new(masked).style(theme.text), inner);
+            if focused {
+                f.set_cursor_position((inner.x + password.cursor() as u16, inner.y));
+            }
+            return;
+        }
         match &self.confirm {
             Some(confirm) => draw_choices(f, area, theme, format!(" Delete {name}? "), confirm),
             None => draw_choices(f, area, theme, format!(" {name} "), &self.choices),
@@ -155,8 +214,11 @@ impl View for ContactMenu {
     }
 
     /// ↑↓ choose and Enter selects; Esc goes back while asking whether to
-    /// delete, and otherwise isn't the menu's
+    /// delete or for the password, and otherwise isn't the menu's
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        if self.password.is_some() {
+            return self.handle_password_key(key, app);
+        }
         if self.confirm.is_some() {
             return self.handle_confirm_key(key, app);
         }
@@ -169,6 +231,9 @@ impl View for ContactMenu {
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
+        if self.password.is_some() {
+            return vec!["Enter=log in", "Esc=back"];
+        }
         let esc = match self.confirm {
             Some(_) => "Esc=back",
             None => "Esc=close",
@@ -212,11 +277,17 @@ mod tests {
         );
         assert_eq!(
             rows(2, false),
-            with_shared(&[Row::Disabled("Log in"), Row::Disabled("Status")])
+            with_shared(&[
+                Row::Enabled("Log in", Choice::LogIn),
+                Row::Disabled("Status")
+            ])
         );
         assert_eq!(
             rows(3, false),
-            with_shared(&[Row::Disabled("Log in"), Row::Disabled("Read posts")])
+            with_shared(&[
+                Row::Enabled("Log in", Choice::LogIn),
+                Row::Disabled("Read posts")
+            ])
         );
         // Nothing of their own, so nothing to divide
         assert_eq!(rows(4, false), shared[1..]);
@@ -305,9 +376,80 @@ mod tests {
         let mut app = app_with_contacts(1);
         app.contacts[0].contact_type = 2;
         let mut menu = ContactMenu::new(&app.contacts[0]);
-        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
         assert_eq!(press(&mut menu, &app, KeyCode::Down), KeyResult::Handled);
         assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
+        assert!(menu.password.is_none());
+    }
+
+    /// A menu for a lone repeater, asking for the password
+    fn asking_for_password(app: &mut App) -> ContactMenu {
+        app.contacts[0].contact_type = 2;
+        let mut menu = ContactMenu::new(&app.contacts[0]);
+        assert_eq!(press(&mut menu, app, KeyCode::Enter), KeyResult::Handled);
+        assert_eq!(menu.key_hints(), ["Enter=log in", "Esc=back"]);
+        menu
+    }
+
+    #[test]
+    fn log_in_asks_for_the_password_and_sends_it() {
+        let mut app = app_with_contacts(1);
+        let key = app.contacts[0].public_key;
+        let mut menu = asking_for_password(&mut app);
+        for c in "hunter2".chars() {
+            press(&mut menu, &app, KeyCode::Char(c));
+        }
+        press(&mut menu, &app, KeyCode::Backspace);
+        assert_eq!(
+            press(&mut menu, &app, KeyCode::Enter),
+            KeyResult::Action(Action::Login {
+                key,
+                password: "hunter".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_password_logs_in_as_guest() {
+        let mut app = app_with_contacts(1);
+        let key = app.contacts[0].public_key;
+        let mut menu = asking_for_password(&mut app);
+        assert_eq!(
+            press(&mut menu, &app, KeyCode::Enter),
+            KeyResult::Action(Action::Login {
+                key,
+                password: String::new()
+            })
+        );
+    }
+
+    #[test]
+    fn the_password_stops_at_what_the_firmware_sends() {
+        let mut app = app_with_contacts(1);
+        let mut menu = asking_for_password(&mut app);
+        for _ in 0..MAX_PASSWORD_LEN + 3 {
+            press(&mut menu, &app, KeyCode::Char('x'));
+        }
+        assert_eq!(
+            menu.password.as_ref().map(|p| p.as_str().len()),
+            Some(MAX_PASSWORD_LEN)
+        );
+    }
+
+    #[test]
+    fn esc_while_asking_for_the_password_goes_back_to_the_menu() {
+        let mut app = app_with_contacts(1);
+        let mut menu = asking_for_password(&mut app);
+        assert_eq!(press(&mut menu, &app, KeyCode::Esc), KeyResult::Handled);
+        assert!(menu.password.is_none());
+        assert_eq!(menu.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
+    }
+
+    #[test]
+    fn a_server_that_has_gone_cant_be_logged_in_to() {
+        let mut app = app_with_contacts(1);
+        let mut menu = asking_for_password(&mut app);
+        app.contacts.clear();
+        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Ignored);
     }
 
     #[test]
