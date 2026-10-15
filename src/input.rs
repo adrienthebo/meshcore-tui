@@ -73,6 +73,11 @@ impl InputLine {
         std::mem::take(&mut self.text)
     }
 
+    /// Chars before the cursor
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
     /// Display width of the text before the cursor
     pub fn cursor_column(&self) -> u16 {
         let before = &self.text[..self.byte_offset(self.cursor)];

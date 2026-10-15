@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "A TUI chat application for MeshCore mesh networking"
 
 [dependencies]
-meshcore-rs = { git = "https://github.com/andrewdavidmackenzie/meshcore-rs", default-features = false, features = [
+meshcore-rs = { git = "https://github.com/adrienthebo/meshcore-rs", branch = "alt/login-pushes", default-features = false, features = [
   "serial",
   "tcp",
 ] }
