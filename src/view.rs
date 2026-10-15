@@ -69,6 +69,12 @@ impl Ui {
         self.active = 0;
     }
 
+    /// Show the Repeaters tab on the repeater with this public key
+    pub fn show_repeater(&mut self, key: [u8; 32]) {
+        self.repeaters.show(key);
+        self.active = self.tabs.len();
+    }
+
     pub fn active_tab(&self) -> &dyn View {
         match self.tabs.get(self.active) {
             Some(tab) => tab.as_ref(),

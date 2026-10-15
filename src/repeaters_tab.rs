@@ -59,6 +59,11 @@ impl View for RepeatersTab {
 }
 
 impl RepeatersTab {
+    /// Show the repeater with this public key, while we're logged in to it
+    pub fn show(&mut self, key: [u8; 32]) {
+        self.browsed = Some(key);
+    }
+
     /// Move the browsed row from the one shown
     fn browse(&mut self, app: &App, step: Step) {
         let repeaters = logged_in(app);
@@ -229,6 +234,14 @@ mod tests {
         press(&mut tab, &app, KeyCode::Up);
         assert_eq!(shown_name(&tab, &app), "Beacon");
         assert_eq!(press(&mut tab, &app, KeyCode::Enter), KeyResult::Ignored);
+    }
+
+    #[test]
+    fn show_picks_the_repeater_to_show() {
+        let app = app_with_logins();
+        let mut tab = RepeatersTab::default();
+        tab.show(app.contacts[0].public_key);
+        assert_eq!(shown_name(&tab, &app), "Hilltop");
     }
 
     #[test]
