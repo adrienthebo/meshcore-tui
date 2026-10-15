@@ -33,11 +33,25 @@ the repo root.
   `activity`, `rx-log`); meshcore-rs work uses `meshcore-rs`. New tabs
   are `feat(tabs): add a … tab`.
 
+## Stages
+
+git-bug's status is only open or closed, so where an open issue stands is
+a label. Every open issue has exactly one stage label:
+
+- `backlog`: the design is open, it's blocked, or it's `low-priority`
+- `ready`: specified and unblocked
+- `in-progress`: work has started
+- `in-review`: a PR is open, ours or upstream
+
+A finished issue is closed. Move an issue between stages with `label rm`
+and `label new`.
+
 ## Reading
 
 ```sh
 git bug bug status:open label:bug          # open bugs
 git bug bug status:open label:feature      # open features
+git bug bug status:open label:ready        # open issues in a stage
 git bug bug status:open "hop count"        # full text search
 git bug bug status:open -f json            # machine-readable output
 git bug bug show <id>                      # details and comments
