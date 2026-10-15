@@ -148,8 +148,8 @@ fn draw_list(
     f.render_stateful_widget(table, area, &mut state);
 }
 
-/// The shown repeater's name, key and our role, above where its status
-/// request stands and its latest status; without one, how to log in
+/// The shown repeater's name, key and our role, with where its status
+/// request stands, above its latest status; without one, how to log in
 fn draw_status(
     f: &mut Frame,
     shown: Option<(&Contact, Role)>,
@@ -171,41 +171,109 @@ fn draw_status(
         &repeater.prefix_hex()[..8],
         role.label()
     );
-    let mut block = panel(theme, title, theme.radio_border);
     let latest = reported.and_then(|r| r.latest.as_ref());
-    if let Some((_, at)) = latest {
-        block = block.title_top(Line::styled(format!(" as of {} ", at), muted).right_aligned());
-    }
     let notice = match (reported.and_then(|r| r.request), latest) {
-        (Some(StatusRequest::Waiting), _) => Some("Requesting status…"),
-        (Some(StatusRequest::Unanswered), _) => Some("No reply to the last request."),
-        (None, None) => Some("No status yet. Press r to request it."),
-        (None, Some(_)) => None,
+        (Some(StatusRequest::Waiting), _) => "Requesting status…".to_string(),
+        (Some(StatusRequest::Unanswered), Some((_, at))) => {
+            format!("No reply to the last request. Showing {at}.")
+        }
+        (Some(StatusRequest::Unanswered), None) => "No reply to the last request.".to_string(),
+        (None, Some((_, at))) => format!("Status as of {at}."),
+        (None, None) => "No status yet. Press r to request it.".to_string(),
     };
-    let mut lines: Vec<Line> = notice.map(|n| Line::styled(n, muted)).into_iter().collect();
+    let [header, metrics] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Fill(1)])
+        .areas(area);
+    let header_text =
+        Paragraph::new(notice)
+            .style(muted)
+            .block(panel(theme, title, theme.radio_border));
+    f.render_widget(header_text, header);
     if let Some((status, _)) = latest {
-        lines.extend(status_lines(status, theme));
+        draw_metrics(f, status, theme, metrics);
     }
-    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// Width of the status labels, so their values line up
-const STATUS_LABEL_WIDTH: usize = 13;
+/// Width of the status's labels, so their values line up
+const STATUS_LABEL_WIDTH: usize = 10;
 
-/// Width of a value in the status's left column
-const STATUS_VALUE_WIDTH: usize = 17;
+/// A repeater's status in panels: Device and Signal, Packets, then Airtime
+/// and Errors
+fn draw_metrics(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
+    let [health, packets, usage, _] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(4),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
+    let [device, signal] = two_columns(health);
+    let device_readings = [
+        ("Uptime", format_duration(status.uptime, 3)),
+        (
+            "Battery",
+            format!("{:.2} V", status.battery_mv as f64 / 1000.0),
+        ),
+        ("TX queue", status.tx_queue_len.to_string()),
+    ];
+    draw_readings(f, theme, " Device ", &device_readings, device);
+    let signal_readings = [
+        ("Noise", format!("{} dBm", status.noise_floor)),
+        ("RSSI", format!("{} dBm", status.last_rssi)),
+        ("SNR", format!("{:.1} dB", status.snr)),
+    ];
+    draw_readings(f, theme, " Signal ", &signal_readings, signal);
+    draw_packets(f, status, theme, packets);
+    let [airtime, errors] = two_columns(usage);
+    let airtime_readings = [
+        ("TX", format_duration(status.airtime, 3)),
+        ("RX", format_duration(status.rx_airtime, 3)),
+    ];
+    draw_readings(f, theme, " Airtime ", &airtime_readings, airtime);
+    let recv_errors = status
+        .recv_errors
+        .map_or(UNKNOWN.to_string(), with_separators);
+    let error_readings = [
+        ("RX errors", recv_errors),
+        ("Flags", format!("0x{:04x}", status.err_events)),
+    ];
+    draw_readings(f, theme, " Errors ", &error_readings, errors);
+}
 
-/// A repeater's status: its health, packet counts, airtime and errors
-fn status_lines(status: &StatusData, theme: &Theme) -> Vec<Line<'static>> {
+/// Two panels side by side, equal width
+fn two_columns(area: Rect) -> [Rect; 2] {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1); 2])
+        .areas(area)
+}
+
+/// A panel of readings, one per line
+fn draw_readings(
+    f: &mut Frame,
+    theme: &Theme,
+    title: &str,
+    readings: &[(&str, String)],
+    area: Rect,
+) {
+    let lines: Vec<Line> = readings
+        .iter()
+        .map(|(label, text)| {
+            let text = value(theme, text.as_str());
+            Line::from_iter(reading(theme, label, STATUS_LABEL_WIDTH, text))
+        })
+        .collect();
+    let readings = Paragraph::new(lines).block(panel(theme, title, theme.radio_border));
+    f.render_widget(readings, area);
+}
+
+/// Packets sent, received and duplicated, by flood and direct
+fn draw_packets(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
     let muted = Style::default().fg(theme.muted);
-    let pair = |left: &'static str, left_value: String, right: &'static str, right_value| {
-        let left_value = value(theme, format!("{:<STATUS_VALUE_WIDTH$}", left_value));
-        let right_value = value(theme, right_value);
-        let left = reading(theme, left, STATUS_LABEL_WIDTH, left_value);
-        let right = reading(theme, right, STATUS_LABEL_WIDTH, right_value);
-        Line::from_iter(left.into_iter().chain(right))
-    };
-    let packets = |label: &'static str, sent: u32, received: u32, duplicates: u16| {
+    let row = |label: &'static str, sent: u32, received: u32, duplicates: u16| {
         let counts = format!(
             "{:<10}{:<11}{}",
             with_separators(sent),
@@ -219,62 +287,29 @@ fn status_lines(status: &StatusData, theme: &Theme) -> Vec<Line<'static>> {
             value(theme, counts),
         ))
     };
-    let recv_errors = status
-        .recv_errors
-        .map_or(UNKNOWN.to_string(), with_separators);
-    vec![
-        pair(
-            "Uptime",
-            format_duration(status.uptime, 3),
-            "Battery",
-            format!("{:.2} V", status.battery_mv as f64 / 1000.0),
-        ),
-        pair(
-            "Noise floor",
-            format!("{} dBm", status.noise_floor),
-            "TX queue",
-            status.tx_queue_len.to_string(),
-        ),
-        pair(
-            "Last RSSI",
-            format!("{} dBm", status.last_rssi),
-            "Last SNR",
-            format!("{:.1} dB", status.snr),
-        ),
-        Line::default(),
+    let rows = vec![
         Line::styled(
             format!(
                 "{:<STATUS_LABEL_WIDTH$}{:<10}{:<11}{}",
-                "Packets", "Sent", "Received", "Duplicates"
+                "", "Sent", "Received", "Duplicates"
             ),
             muted,
         ),
-        packets(
-            "  flood",
+        row(
+            "flood",
             status.flood_sent,
             status.flood_recv,
             status.flood_dups,
         ),
-        packets(
-            "  direct",
+        row(
+            "direct",
             status.direct_sent,
             status.direct_recv,
             status.direct_dups,
         ),
-        Line::default(),
-        pair(
-            "TX airtime",
-            format_duration(status.airtime, 3),
-            "RX airtime",
-            format_duration(status.rx_airtime, 3),
-        ),
-        pair(
-            "RX errors",
-            recv_errors,
-            "Error flags",
-            format!("0x{:04x}", status.err_events),
-        ),
-    ]
+    ];
+    let packets = Paragraph::new(rows).block(panel(theme, " Packets ", theme.radio_border));
+    f.render_widget(packets, area);
 }
 
 #[cfg(test)]
@@ -357,7 +392,7 @@ mod tests {
     }
 
     fn render_status(app: &App) -> TestBackend {
-        render_sized(app, &RepeatersTab::default(), 90, 15)
+        render_sized(app, &RepeatersTab::default(), 90, 17)
     }
 
     #[test]
