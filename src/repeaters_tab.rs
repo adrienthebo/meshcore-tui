@@ -228,16 +228,20 @@ fn draw_metrics(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
     draw_readings(f, theme, " Signal ", &signal_readings, signal);
     draw_packets(f, status, theme, packets);
     let [airtime, errors] = two_columns(usage);
-    let on_air = |air_secs: u32| {
-        let total = format!("{:<8}", format_duration(air_secs, 3));
-        match fraction(air_secs, status.uptime) {
-            Some(share) => format!("{total}{:>5.1}% {}", share * 100.0, duty_bar(share, 4)),
-            None => total,
-        }
+    let totals = [status.airtime, status.rx_airtime].map(|secs| format_duration(secs, 3));
+    // Wide enough for the longer total, so the shares line up
+    let width = totals.iter().map(String::len).max().unwrap_or(0) + 1;
+    let on_air = |total: &str, air_secs: u32| match fraction(air_secs, status.uptime) {
+        Some(share) => format!(
+            "{total:<width$}{:>5.1}% {}",
+            share * 100.0,
+            duty_bar(share, 4)
+        ),
+        None => total.to_string(),
     };
     let airtime_readings = [
-        ("TX", on_air(status.airtime)),
-        ("RX", on_air(status.rx_airtime)),
+        ("TX", on_air(&totals[0], status.airtime)),
+        ("RX", on_air(&totals[1], status.rx_airtime)),
     ];
     draw_readings(f, theme, " Airtime ", &airtime_readings, airtime);
     // Each packet the radio tried to decode was either received or an error
@@ -268,7 +272,8 @@ fn two_columns(area: Rect) -> [Rect; 2] {
         .areas(area)
 }
 
-/// A panel of readings, one per line
+/// A panel of readings, one per line; labels are padded to the status's
+/// label width, or wider to keep two spaces after the longest
 fn draw_readings(
     f: &mut Frame,
     theme: &Theme,
@@ -276,11 +281,13 @@ fn draw_readings(
     readings: &[(&str, String)],
     area: Rect,
 ) {
+    let longest = readings.iter().map(|(label, _)| label.len()).max();
+    let width = STATUS_LABEL_WIDTH.max(longest.unwrap_or(0) + 2);
     let lines: Vec<Line> = readings
         .iter()
         .map(|(label, text)| {
             let text = value(theme, text.as_str());
-            Line::from_iter(reading(theme, label, STATUS_LABEL_WIDTH, text))
+            Line::from_iter(reading(theme, label, width, text))
         })
         .collect();
     let readings = Paragraph::new(lines).block(panel(theme, title, theme.radio_border));
@@ -427,6 +434,16 @@ mod tests {
     #[test]
     fn says_when_a_status_request_goes_unanswered_and_keeps_the_last() {
         let app = app_with_status(true, Some(StatusRequest::Unanswered));
+        insta::assert_snapshot!(render_status(&app));
+    }
+
+    #[test]
+    fn airtime_shares_line_up_past_a_long_total() {
+        let mut app = app_with_status(true, None);
+        let status = app.statuses.values_mut().next().unwrap();
+        let (latest, _) = status.latest.as_mut().unwrap();
+        latest.airtime = 58_837;
+        latest.rx_airtime = 80_282;
         insta::assert_snapshot!(render_status(&app));
     }
 
