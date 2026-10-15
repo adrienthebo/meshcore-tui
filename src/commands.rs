@@ -465,8 +465,7 @@ impl App {
     }
 
     fn switch_channel(&mut self, ch: u8) {
-        self.active_channel = ch;
-        self.selected_key = None;
+        self.select_channel(ch);
         let label = self.channel_label(ch);
         self.sys(&format!("Switched to {}", label));
     }
