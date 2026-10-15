@@ -1,0 +1,41 @@
+# Fails a pull request into master while meshcore-rs comes from anywhere but
+# upstream: a fork branch, a path or a [patch]. A stacked pull request may
+# carry one, and is checked when it's retargeted onto master.
+name: Upstream dependencies
+
+on:
+  pull_request:
+    # edited covers retargeting a stacked pull request onto master
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  meshcore-rs:
+    if: github.event_name == 'push' || github.base_ref == 'master'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Cargo.lock records where meshcore-rs comes from, however Cargo.toml
+      # says it; a path dependency has no source line
+      - name: Check meshcore-rs comes from upstream
+        run: |
+          source=$(awk '
+            /^name = "meshcore-rs"$/ { found = 1 }
+            found && /^$/ { exit }
+            found && /^source = / { print; exit }
+          ' Cargo.lock)
+          case "$source" in
+            'source = "git+https://github.com/andrewdavidmackenzie/meshcore-rs#'*) ;;
+            *)
+              source=${source#source = }
+              echo "::error file=Cargo.lock::meshcore-rs must come from upstream to merge into master, not ${source:-a path}"
+              exit 1
+              ;;
+          esac
