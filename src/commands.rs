@@ -290,7 +290,7 @@ impl Kind {
 /// The firmware sends at most this much of a login password (BaseChatMesh::sendLogin)
 pub const MAX_PASSWORD_LEN: usize = 15;
 
-/// "<server> [password]": the server is the first word, the password the rest
+/// `<server> [password]`: the server is the first word, the password the rest
 fn parse_login(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     let arg = arg.trim();
     if arg.is_empty() {
