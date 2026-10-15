@@ -1168,7 +1168,7 @@ dependencies = [
 [[package]]
 name = "meshcore-rs"
 version = "0.2.0"
-source = "git+https://github.com/adrienthebo/meshcore-rs?branch=alt%2Flogin-pushes#01f817ce800fdfefb6e06cce2e028a07a8ade77d"
+source = "git+https://github.com/adrienthebo/meshcore-rs?branch=alt%2Frepeater-control#10dd62e86e0207c03c6c39a927f0788dca4174a1"
 dependencies = [
  "btleplug",
  "bytes",
