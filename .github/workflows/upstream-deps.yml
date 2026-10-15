@@ -1,6 +1,7 @@
-# Fails a pull request into master while meshcore-rs comes from anywhere but
-# upstream: a fork branch, a path or a [patch]. A stacked pull request may
-# carry one, and is checked when it's retargeted onto master.
+# Fails a pull request into master while any dependency is patched: taken
+# from a fork, a path or a [patch] instead of its upstream. A stacked pull
+# request may carry a patched dependency, and is checked when it's retargeted
+# onto master.
 name: Upstream dependencies
 
 on:
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  meshcore-rs:
+  upstream-deps:
     if: github.event_name == 'push' || github.base_ref == 'master'
     runs-on: ubuntu-24.04
     steps:
@@ -22,20 +23,37 @@ jobs:
         with:
           persist-credentials: false
 
-      # Cargo.lock records where meshcore-rs comes from, however Cargo.toml
-      # says it; a path dependency has no source line
-      - name: Check meshcore-rs comes from upstream
+      - name: Check for dependency overrides
         run: |
-          source=$(awk '
-            /^name = "meshcore-rs"$/ { found = 1 }
-            found && /^$/ { exit }
-            found && /^source = / { print; exit }
+          status=0
+          for file in Cargo.toml .cargo/config.toml .cargo/config; do
+            [ -f "$file" ] || continue
+            while IFS=: read -r line text; do
+              echo "::error file=$file,line=$line::$text overrides a dependency; it can't merge into master"
+              status=1
+            done < <(grep -n -e '^\[patch' -e '^paths *=' "$file")
+          done
+          exit "$status"
+
+      # Cargo.lock records where each package comes from, however Cargo.toml
+      # says it; a path dependency has no source line
+      - name: Check each dependency comes from upstream
+        run: |
+          patched=$(awk '
+            function check() {
+              if (name == "\"meshcore-chat\"") return
+              if (source == "\"registry+https://github.com/rust-lang/crates.io-index\"") return
+              # Upstream meshcore-rs, on its default branch
+              if (index(source, "\"git+https://github.com/andrewdavidmackenzie/meshcore-rs#") == 1) return
+              print name " from " (source == "" ? "a path" : source)
+            }
+            /^\[\[package\]\]$/ { if (name != "") check(); name = ""; source = "" }
+            /^name = / { name = $3 }
+            /^source = / { source = $3 }
+            END { if (name != "") check() }
           ' Cargo.lock)
-          case "$source" in
-            'source = "git+https://github.com/andrewdavidmackenzie/meshcore-rs#'*) ;;
-            *)
-              source=${source#source = }
-              echo "::error file=Cargo.lock::meshcore-rs must come from upstream to merge into master, not ${source:-a path}"
-              exit 1
-              ;;
-          esac
+          [ -z "$patched" ] && exit 0
+          while read -r package; do
+            echo "::error file=Cargo.lock::$package; patched dependencies can't merge into master"
+          done <<< "$patched"
+          exit 1
