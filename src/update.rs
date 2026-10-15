@@ -113,7 +113,14 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
             return app.set_favorite(key, favorite).into_iter().collect()
         }
         Action::DeleteContact(key) => return app.delete_contact(key).into_iter().collect(),
-        Action::Login { key, password } => return app.login(key, password).into_iter().collect(),
+        // The server's reply shows in the Overview's messages
+        Action::Login { key, password } => {
+            let effects: Vec<Effect> = app.login(key, password).into_iter().collect();
+            if !effects.is_empty() {
+                ui.show_overview();
+            }
+            return effects;
+        }
     }
     Vec::new()
 }
@@ -326,8 +333,9 @@ mod tests {
     }
 
     #[test]
-    fn login_asks_the_radio_to_send_it() {
+    fn login_asks_the_radio_to_send_it_and_shows_the_overview() {
         let (mut app, mut ui) = (app_with_contacts(2), test_ui());
+        ui.active = 1;
         let key = app.contacts[1].public_key;
         let login = || Action::Login {
             key,
@@ -335,6 +343,7 @@ mod tests {
         };
         assert!(apply_action(&mut app, &mut ui, login()).is_empty());
         assert_eq!(last_message(&app), "Not connected");
+        assert_eq!(ui.active, 1);
         app.connected = true;
         let effects = apply_action(&mut app, &mut ui, login());
         assert!(matches!(
@@ -342,11 +351,13 @@ mod tests {
             [Effect::Radio(Command::SendLogin { public_key, password })]
                 if *public_key == key && password == "pw"
         ));
+        assert_eq!(ui.active, 0);
     }
 
     #[test]
-    fn login_to_a_server_that_has_gone_says_so() {
+    fn login_to_a_server_that_has_gone_says_so_and_stays_put() {
         let (mut app, mut ui) = (app_with_contacts(1), test_ui());
+        ui.active = 1;
         app.connected = true;
         let login = Action::Login {
             key: [9; 32],
@@ -354,5 +365,6 @@ mod tests {
         };
         assert!(apply_action(&mut app, &mut ui, login).is_empty());
         assert_eq!(last_message(&app), "That contact is no longer in the list");
+        assert_eq!(ui.active, 1);
     }
 }
