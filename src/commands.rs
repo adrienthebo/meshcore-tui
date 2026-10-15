@@ -254,7 +254,7 @@ const COMPANION: u8 = 1;
 pub const REPEATER: u8 = 2;
 
 /// Contact type for a room server (ADV_TYPE_ROOM)
-const ROOM: u8 = 3;
+pub const ROOM: u8 = 3;
 
 /// Which contacts a command can pick
 #[derive(Clone, Copy)]

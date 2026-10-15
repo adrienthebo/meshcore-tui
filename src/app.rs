@@ -37,7 +37,7 @@ impl Role {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Role::Admin => "admin",
             Role::ReadWrite => "read-write",

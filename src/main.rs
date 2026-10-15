@@ -8,6 +8,7 @@ mod overview;
 mod popover;
 mod radio;
 mod radio_tab;
+mod repeaters_tab;
 mod rx_log;
 mod rx_log_tab;
 mod stats;

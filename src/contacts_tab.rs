@@ -120,7 +120,7 @@ impl View for ContactsTab {
     }
 }
 
-enum Step {
+pub enum Step {
     Up,
     Down,
 }
