@@ -815,6 +815,16 @@ impl App {
         }))
     }
 
+    /// Delete the contact with this public key from the radio
+    pub fn delete_contact(&mut self, public_key: PublicKey) -> Option<Effect> {
+        let Some(contact) = self.contacts.iter().find(|c| c.public_key == public_key) else {
+            self.err("That contact is no longer in the list");
+            return None;
+        };
+        let name = contact.adv_name.clone();
+        self.when_connected(Effect::Radio(Command::RemoveContact { name, public_key }))
+    }
+
     /// The effect, or None and an error when there's no radio to carry it out
     fn when_connected(&mut self, effect: Effect) -> Option<Effect> {
         if !self.connected {

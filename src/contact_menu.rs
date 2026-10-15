@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use meshcore_rs::events::Contact;
 use ratatui::{layout::Rect, Frame};
 
@@ -16,16 +16,23 @@ enum Choice {
     Message,
     /// Mark the contact as a favorite (true) or unmark it
     Favorite(bool),
+    /// Ask whether to delete the contact
+    Delete,
 }
 
-impl Choice {
-    fn action(self, contact: &Contact) -> Action {
-        let key = contact.public_key;
-        match self {
-            Choice::Message => Action::MessageContact(key),
-            Choice::Favorite(favorite) => Action::SetFavorite { key, favorite },
-        }
-    }
+/// The answer to whether to delete the contact
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Confirm {
+    Cancel,
+    Delete,
+}
+
+/// Asks whether to delete; Cancel comes first, so it's highlighted
+fn confirm_rows() -> Vec<Row<Confirm>> {
+    vec![
+        Row::Enabled("Cancel", Confirm::Cancel),
+        Row::Enabled("Delete", Confirm::Delete),
+    ]
 }
 
 /// The menu for a contact of this type (ADV_TYPE_*, helpers/AdvertDataHelpers.h):
@@ -46,18 +53,32 @@ fn rows(contact_type: u8, favorite: bool) -> Vec<Row<Choice>> {
     } else {
         Row::Enabled("Favorite", Choice::Favorite(true))
     });
-    rows.push(Row::Disabled("Delete"));
+    rows.push(Row::Enabled("Delete", Choice::Delete));
     rows
 }
 
+/// Choices in a popover with this title, centered in `area`
+fn draw_choices<T: Copy>(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    title: String,
+    choices: &Choices<T>,
+) {
+    let inner = Popover::new(title, choices.width(), choices.height()).render(f, area, theme);
+    choices.draw(f, inner, theme);
+}
+
 /// The things to do with one contact, drawn as a popover; ↑↓ choose and Enter
-/// asks for the chosen one
+/// asks for the chosen one. Delete asks first, and Esc goes back from asking
 #[derive(Debug)]
 pub struct ContactMenu {
     /// The contact's public key; the menu draws nothing and chooses nothing
     /// while it isn't in the contact list
     key: [u8; 32],
     choices: Choices<Choice>,
+    /// Whether to delete the contact, while the menu is asking
+    confirm: Option<Choices<Confirm>>,
 }
 
 impl ContactMenu {
@@ -65,6 +86,43 @@ impl ContactMenu {
         Self {
             key: contact.public_key,
             choices: Choices::new(rows(contact.contact_type, is_favorite(contact))),
+            confirm: None,
+        }
+    }
+
+    /// What choosing does: ask for an action, or ask whether to delete
+    fn choose(&mut self, choice: Choice) -> KeyResult {
+        let key = self.key;
+        match choice {
+            Choice::Message => KeyResult::Action(Action::MessageContact(key)),
+            Choice::Favorite(favorite) => KeyResult::Action(Action::SetFavorite { key, favorite }),
+            Choice::Delete => {
+                self.confirm = Some(Choices::new(confirm_rows()));
+                KeyResult::Handled
+            }
+        }
+    }
+
+    /// Keys while asking whether to delete; Esc and Cancel go back to the menu
+    fn handle_confirm_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        let Some(confirm) = &mut self.confirm else {
+            return KeyResult::Ignored;
+        };
+        if key.code == KeyCode::Esc {
+            self.confirm = None;
+            return KeyResult::Handled;
+        }
+        match confirm.handle_key(key) {
+            ChoicesKey::Ignored => KeyResult::Ignored,
+            ChoicesKey::Handled => KeyResult::Handled,
+            ChoicesKey::Chosen(_) if self.contact(app).is_none() => KeyResult::Ignored,
+            ChoicesKey::Chosen(Confirm::Cancel) => {
+                self.confirm = None;
+                KeyResult::Handled
+            }
+            ChoicesKey::Chosen(Confirm::Delete) => {
+                KeyResult::Action(Action::DeleteContact(self.key))
+            }
         }
     }
 
@@ -79,34 +137,43 @@ impl View for ContactMenu {
         "Contact"
     }
 
-    /// A popover titled with the contact's name and key prefix, centered in `area`
+    /// A popover titled with the contact's name and key prefix, centered in
+    /// `area`; while asking whether to delete, the title asks instead
     fn draw(&self, f: &mut Frame, area: Rect, app: &App, theme: &Theme, _focused: bool) {
         let Some(contact) = self.contact(app) else {
             return;
         };
-        let title = format!(
-            " {} [{}] ",
+        let name = format!(
+            "{} [{}]",
             sanitize(&contact.adv_name),
             &contact.prefix_hex()[..8]
         );
-        let popover = Popover::new(title, self.choices.width(), self.choices.height());
-        let inner = popover.render(f, area, theme);
-        self.choices.draw(f, inner, theme);
+        match &self.confirm {
+            Some(confirm) => draw_choices(f, area, theme, format!(" Delete {name}? "), confirm),
+            None => draw_choices(f, area, theme, format!(" {name} "), &self.choices),
+        }
     }
 
+    /// ↑↓ choose and Enter selects; Esc goes back while asking whether to
+    /// delete, and otherwise isn't the menu's
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
+        if self.confirm.is_some() {
+            return self.handle_confirm_key(key, app);
+        }
         match self.choices.handle_key(key) {
             ChoicesKey::Ignored => KeyResult::Ignored,
             ChoicesKey::Handled => KeyResult::Handled,
-            ChoicesKey::Chosen(choice) => match self.contact(app) {
-                Some(contact) => KeyResult::Action(choice.action(contact)),
-                None => KeyResult::Ignored,
-            },
+            ChoicesKey::Chosen(_) if self.contact(app).is_none() => KeyResult::Ignored,
+            ChoicesKey::Chosen(choice) => self.choose(choice),
         }
     }
 
     fn key_hints(&self) -> Vec<&'static str> {
-        vec!["↑↓=choose", "Enter=select", "Esc=close"]
+        let esc = match self.confirm {
+            Some(_) => "Esc=back",
+            None => "Esc=close",
+        };
+        vec!["↑↓=choose", "Enter=select", esc]
     }
 }
 
@@ -136,7 +203,7 @@ mod tests {
         let shared = [
             Row::Divider,
             Row::Enabled("Favorite", Choice::Favorite(true)),
-            Row::Disabled("Delete"),
+            Row::Enabled("Delete", Choice::Delete),
         ];
         let with_shared = |own: &[Row<Choice>]| [own, &shared].concat();
         assert_eq!(
@@ -162,9 +229,60 @@ mod tests {
             rows(4, true),
             [
                 Row::Enabled("Unfavorite", Choice::Favorite(false)),
-                Row::Disabled("Delete"),
+                Row::Enabled("Delete", Choice::Delete),
             ]
         );
+    }
+
+    /// A menu for a lone companion, asking whether to delete it
+    fn asking_to_delete(app: &App) -> ContactMenu {
+        let mut menu = ContactMenu::new(&app.contacts[0]);
+        press(&mut menu, app, KeyCode::Down);
+        press(&mut menu, app, KeyCode::Down);
+        assert_eq!(press(&mut menu, app, KeyCode::Enter), KeyResult::Handled);
+        menu
+    }
+
+    #[test]
+    fn delete_asks_first_and_deletes_only_when_confirmed() {
+        let app = app_with_contacts(1);
+        let key = app.contacts[0].public_key;
+        let mut menu = asking_to_delete(&app);
+        assert_eq!(menu.key_hints(), ["↑↓=choose", "Enter=select", "Esc=back"]);
+        press(&mut menu, &app, KeyCode::Down);
+        assert_eq!(
+            press(&mut menu, &app, KeyCode::Enter),
+            KeyResult::Action(Action::DeleteContact(key))
+        );
+    }
+
+    #[test]
+    fn asking_to_delete_highlights_cancel_which_goes_back_to_the_menu() {
+        let app = app_with_contacts(1);
+        let mut menu = asking_to_delete(&app);
+        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Handled);
+        assert!(menu.confirm.is_none());
+        assert_eq!(menu.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
+    }
+
+    #[test]
+    fn esc_while_asking_to_delete_goes_back_to_the_menu() {
+        let app = app_with_contacts(1);
+        let mut menu = asking_to_delete(&app);
+        assert_eq!(press(&mut menu, &app, KeyCode::Esc), KeyResult::Handled);
+        assert!(menu.confirm.is_none());
+        // Back in the menu, the highlight is still on Delete
+        press(&mut menu, &app, KeyCode::Enter);
+        assert!(menu.confirm.is_some());
+    }
+
+    #[test]
+    fn a_contact_that_has_gone_cant_be_deleted() {
+        let mut app = app_with_contacts(1);
+        let mut menu = asking_to_delete(&app);
+        app.contacts.clear();
+        press(&mut menu, &app, KeyCode::Down);
+        assert_eq!(press(&mut menu, &app, KeyCode::Enter), KeyResult::Ignored);
     }
 
     #[test]

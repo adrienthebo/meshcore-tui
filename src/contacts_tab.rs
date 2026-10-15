@@ -64,18 +64,20 @@ impl View for ContactsTab {
     /// Tab moves focus between the table, the discovered nodes and the adverts;
     /// ↑↓ browse contacts or discovered nodes or scroll adverts, Enter opens
     /// the browsed contact's menu and `a` adds the browsed discovered node.
-    /// An open menu takes every key, and Esc or a choice closes it; one whose
-    /// contact has gone closes on the next key, which goes to the tab.
+    /// An open menu takes every key, and a choice or an Esc the menu doesn't
+    /// use closes it; one whose contact has gone closes on the next key, which
+    /// goes to the tab.
     fn handle_key(&mut self, key: KeyEvent, app: &App) -> KeyResult {
         if let Some(menu) = &mut self.menu {
-            if key.code == KeyCode::Esc {
-                self.menu = None;
-                return KeyResult::Handled;
-            }
             if menu.contact(app).is_some() {
                 let result = menu.handle_key(key, app);
-                if matches!(result, KeyResult::Action(_)) {
-                    self.menu = None;
+                match result {
+                    KeyResult::Action(_) => self.menu = None,
+                    KeyResult::Ignored if key.code == KeyCode::Esc => {
+                        self.menu = None;
+                        return KeyResult::Handled;
+                    }
+                    KeyResult::Ignored | KeyResult::Handled => {}
                 }
                 return result;
             }
@@ -601,6 +603,21 @@ mod tests {
         assert!(tab.menu.is_none());
         // With the menu closed, Esc is no longer the tab's
         assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Ignored);
+    }
+
+    #[test]
+    fn esc_while_asking_to_delete_goes_back_to_the_menu_then_closes_it() {
+        let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Down);
+        press(&mut tab, &app, KeyCode::Enter);
+        insta::assert_snapshot!(render(&app, &tab, 80, 26));
+        assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Handled);
+        assert_eq!(tab.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
+        assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Handled);
+        assert!(tab.menu.is_none());
     }
 
     #[test]

@@ -54,6 +54,8 @@ pub enum Action {
         key: [u8; 32],
         favorite: bool,
     },
+    /// Delete the contact with this public key
+    DeleteContact([u8; 32]),
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
@@ -102,6 +104,7 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
         Action::SetFavorite { key, favorite } => {
             return app.set_favorite(key, favorite).into_iter().collect()
         }
+        Action::DeleteContact(key) => return app.delete_contact(key).into_iter().collect(),
     }
     Vec::new()
 }
@@ -279,5 +282,28 @@ mod tests {
                 favorite: true
             })]
         ));
+    }
+
+    #[test]
+    fn delete_contact_asks_the_radio_to_remove_it_by_key() {
+        let (mut app, mut ui) = (app_with_contacts(2), test_ui());
+        let key = app.contacts[1].public_key;
+        assert!(apply_action(&mut app, &mut ui, Action::DeleteContact(key)).is_empty());
+        assert_eq!(last_message(&app), "Not connected");
+        app.connected = true;
+        let effects = apply_action(&mut app, &mut ui, Action::DeleteContact(key));
+        assert!(matches!(
+            &effects[..],
+            [Effect::Radio(Command::RemoveContact { name, public_key })]
+                if *name == app.contacts[1].adv_name && *public_key == key
+        ));
+    }
+
+    #[test]
+    fn delete_contact_that_has_gone_says_so() {
+        let (mut app, mut ui) = (app_with_contacts(1), test_ui());
+        app.connected = true;
+        assert!(apply_action(&mut app, &mut ui, Action::DeleteContact([9; 32])).is_empty());
+        assert_eq!(last_message(&app), "That contact is no longer in the list");
     }
 }
