@@ -1,0 +1,19 @@
+---
+source: src/repeaters_tab.rs
+expression: "render_status(&app_with_status(true, None))"
+---
+"╭ Logged in (2) ───────────╮╭ Beacon [e5e5e5e5] · guest ───────────────── as of 14:02:37 ╮"
+"│Beacon          guest     ││Uptime       3d4h12m          Battery      4.12 V           │"
+"│Hilltop         admin     ││Noise floor  -118 dBm         TX queue     0                │"
+"│                          ││Last RSSI    -92 dBm          Last SNR     -7.5 dB          │"
+"│                          ││                                                            │"
+"│                          ││Packets      Sent      Received   Duplicates                │"
+"│                          ││  flood      1,204     8,311      412                       │"
+"│                          ││  direct     88        97         3                         │"
+"│                          ││                                                            │"
+"│                          ││TX airtime   30m              RX airtime   2h14m            │"
+"│                          ││RX errors    11               Error flags  0x0000           │"
+"│                          ││                                                            │"
+"│                          ││                                                            │"
+"│                          ││                                                            │"
+"╰──────────────────────────╯╰────────────────────────────────────────────────────────────╯"

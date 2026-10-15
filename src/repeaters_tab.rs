@@ -1,18 +1,20 @@
 use std::cell::RefCell;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use meshcore_rs::events::Contact;
+use meshcore_rs::events::{Contact, StatusData};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
+    text::Line,
     widgets::{Paragraph, Row, Table, TableState, Wrap},
     Frame,
 };
 
-use crate::app::{App, Role};
+use crate::app::{App, RepeaterStatus, Role, StatusRequest};
 use crate::commands::REPEATER;
 use crate::contacts_tab::Step;
-use crate::text::sanitize;
+use crate::radio_tab::{reading, value, with_separators, UNKNOWN};
+use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
 use crate::update::Action;
@@ -116,7 +118,9 @@ fn draw_repeaters_tab(f: &mut Frame, app: &App, tab: &RepeatersTab, theme: &Them
         .constraints([Constraint::Length(LIST_WIDTH), Constraint::Fill(1)])
         .areas(area);
     draw_list(f, &repeaters, row, tab, theme, list);
-    draw_status(f, row.map(|row| repeaters[row]), theme, status);
+    let shown = row.map(|row| repeaters[row]);
+    let reported = shown.and_then(|(repeater, _)| app.statuses.get(&repeater.public_key));
+    draw_status(f, shown, reported, theme, status);
 }
 
 fn draw_list(
@@ -144,26 +148,133 @@ fn draw_list(
     f.render_stateful_widget(table, area, &mut state);
 }
 
-/// The shown repeater's name, key and our role, above its status; without
-/// one, how to log in
-fn draw_status(f: &mut Frame, shown: Option<(&Contact, Role)>, theme: &Theme, area: Rect) {
-    let (title, text) = match shown {
-        Some((repeater, role)) => (
-            format!(
-                " {} [{}] · {} ",
-                sanitize(&repeater.adv_name),
-                &repeater.prefix_hex()[..8],
-                role.label()
-            ),
-            "No status yet.",
-        ),
-        None => (" Status ".to_string(), NOT_LOGGED_IN),
+/// The shown repeater's name, key and our role, above where its status
+/// request stands and its latest status; without one, how to log in
+fn draw_status(
+    f: &mut Frame,
+    shown: Option<(&Contact, Role)>,
+    reported: Option<&RepeaterStatus>,
+    theme: &Theme,
+    area: Rect,
+) {
+    let muted = Style::default().fg(theme.muted);
+    let Some((repeater, role)) = shown else {
+        let text = Paragraph::new(NOT_LOGGED_IN)
+            .style(muted)
+            .wrap(Wrap { trim: true })
+            .block(panel(theme, " Status ", theme.radio_border));
+        return f.render_widget(text, area);
     };
-    let text = Paragraph::new(text)
-        .style(Style::default().fg(theme.muted))
-        .wrap(Wrap { trim: true })
-        .block(panel(theme, title, theme.radio_border));
-    f.render_widget(text, area);
+    let title = format!(
+        " {} [{}] · {} ",
+        sanitize(&repeater.adv_name),
+        &repeater.prefix_hex()[..8],
+        role.label()
+    );
+    let mut block = panel(theme, title, theme.radio_border);
+    let latest = reported.and_then(|r| r.latest.as_ref());
+    if let Some((_, at)) = latest {
+        block = block.title_top(Line::styled(format!(" as of {} ", at), muted).right_aligned());
+    }
+    let notice = match (reported.and_then(|r| r.request), latest) {
+        (Some(StatusRequest::Waiting), _) => Some("Requesting status…"),
+        (Some(StatusRequest::Unanswered), _) => Some("No reply to the last request."),
+        (None, None) => Some("No status yet. Press r to request it."),
+        (None, Some(_)) => None,
+    };
+    let mut lines: Vec<Line> = notice.map(|n| Line::styled(n, muted)).into_iter().collect();
+    if let Some((status, _)) = latest {
+        lines.extend(status_lines(status, theme));
+    }
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Width of the status labels, so their values line up
+const STATUS_LABEL_WIDTH: usize = 13;
+
+/// Width of a value in the status's left column
+const STATUS_VALUE_WIDTH: usize = 17;
+
+/// A repeater's status: its health, packet counts, airtime and errors
+fn status_lines(status: &StatusData, theme: &Theme) -> Vec<Line<'static>> {
+    let muted = Style::default().fg(theme.muted);
+    let pair = |left: &'static str, left_value: String, right: &'static str, right_value| {
+        let left_value = value(theme, format!("{:<STATUS_VALUE_WIDTH$}", left_value));
+        let right_value = value(theme, right_value);
+        let left = reading(theme, left, STATUS_LABEL_WIDTH, left_value);
+        let right = reading(theme, right, STATUS_LABEL_WIDTH, right_value);
+        Line::from_iter(left.into_iter().chain(right))
+    };
+    let packets = |label: &'static str, sent: u32, received: u32, duplicates: u16| {
+        let counts = format!(
+            "{:<10}{:<11}{}",
+            with_separators(sent),
+            with_separators(received),
+            with_separators(duplicates.into())
+        );
+        Line::from_iter(reading(
+            theme,
+            label,
+            STATUS_LABEL_WIDTH,
+            value(theme, counts),
+        ))
+    };
+    let recv_errors = status
+        .recv_errors
+        .map_or(UNKNOWN.to_string(), with_separators);
+    vec![
+        pair(
+            "Uptime",
+            format_duration(status.uptime, 3),
+            "Battery",
+            format!("{:.2} V", status.battery_mv as f64 / 1000.0),
+        ),
+        pair(
+            "Noise floor",
+            format!("{} dBm", status.noise_floor),
+            "TX queue",
+            status.tx_queue_len.to_string(),
+        ),
+        pair(
+            "Last RSSI",
+            format!("{} dBm", status.last_rssi),
+            "Last SNR",
+            format!("{:.1} dB", status.snr),
+        ),
+        Line::default(),
+        Line::styled(
+            format!(
+                "{:<STATUS_LABEL_WIDTH$}{:<10}{:<11}{}",
+                "Packets", "Sent", "Received", "Duplicates"
+            ),
+            muted,
+        ),
+        packets(
+            "  flood",
+            status.flood_sent,
+            status.flood_recv,
+            status.flood_dups,
+        ),
+        packets(
+            "  direct",
+            status.direct_sent,
+            status.direct_recv,
+            status.direct_dups,
+        ),
+        Line::default(),
+        pair(
+            "TX airtime",
+            format_duration(status.airtime, 3),
+            "RX airtime",
+            format_duration(status.rx_airtime, 3),
+        ),
+        pair(
+            "RX errors",
+            recv_errors,
+            "Error flags",
+            format!("0x{:04x}", status.err_events),
+        ),
+    ]
 }
 
 #[cfg(test)]
@@ -176,7 +287,11 @@ mod tests {
     use ratatui::Terminal;
 
     fn render(app: &App, tab: &RepeatersTab) -> TestBackend {
-        let mut terminal = Terminal::new(TestBackend::new(80, 8)).unwrap();
+        render_sized(app, tab, 80, 8)
+    }
+
+    fn render_sized(app: &App, tab: &RepeatersTab, width: u16, height: u16) -> TestBackend {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|f| draw_repeaters_tab(f, app, tab, &Theme::CLASSIC, f.area()))
             .unwrap();
@@ -229,6 +344,37 @@ mod tests {
     #[test]
     fn lists_the_repeaters_logged_in_to_beside_the_first() {
         insta::assert_snapshot!(render(&app_with_logins(), &RepeatersTab::default()));
+    }
+
+    /// Logged in as app_with_logins, with Beacon's status request in this state
+    fn app_with_status(latest: bool, request: Option<StatusRequest>) -> App {
+        let mut app = app_with_logins();
+        let mut key = [0; 32];
+        key[..6].copy_from_slice(&[0xe5; 6]);
+        let latest = latest.then(|| (repeater_status([0xe5; 6]), "14:02:37".to_string()));
+        app.statuses.insert(key, RepeaterStatus { latest, request });
+        app
+    }
+
+    fn render_status(app: &App) -> TestBackend {
+        render_sized(app, &RepeatersTab::default(), 90, 15)
+    }
+
+    #[test]
+    fn shows_the_shown_repeaters_status() {
+        insta::assert_snapshot!(render_status(&app_with_status(true, None)));
+    }
+
+    #[test]
+    fn says_while_a_status_request_waits() {
+        let app = app_with_status(false, Some(StatusRequest::Waiting));
+        insta::assert_snapshot!(render_status(&app));
+    }
+
+    #[test]
+    fn says_when_a_status_request_goes_unanswered_and_keeps_the_last() {
+        let app = app_with_status(true, Some(StatusRequest::Unanswered));
+        insta::assert_snapshot!(render_status(&app));
     }
 
     #[test]

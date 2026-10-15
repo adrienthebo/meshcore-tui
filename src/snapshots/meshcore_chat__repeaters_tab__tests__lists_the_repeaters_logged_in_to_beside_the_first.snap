@@ -3,7 +3,7 @@ source: src/repeaters_tab.rs
 expression: "render(&app_with_logins(), &RepeatersTab::default())"
 ---
 "╭ Logged in (2) ───────────╮╭ Beacon [e5e5e5e5] · guest ───────────────────────╮"
-"│Beacon          guest     ││No status yet.                                    │"
+"│Beacon          guest     ││No status yet. Press r to request it.             │"
 "│Hilltop         admin     ││                                                  │"
 "│                          ││                                                  │"
 "│                          ││                                                  │"

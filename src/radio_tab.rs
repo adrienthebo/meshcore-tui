@@ -90,13 +90,13 @@ fn draw_radio_tab(f: &mut Frame, app: &App, theme: &Theme, now: i64, area: Rect)
 }
 
 /// Shown in place of a reading the radio hasn't sent yet
-const UNKNOWN: &str = "—";
+pub const UNKNOWN: &str = "—";
 
 /// Width of the Signal and Device panels' labels, so their values line up
 const LABEL_WIDTH: usize = 10;
 
 /// A reading: its label, muted and padded to `width`, then its value
-fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> [Span<'a>; 2] {
+pub fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> [Span<'a>; 2] {
     [
         Span::styled(
             format!("{:<width$}", label),
@@ -106,7 +106,7 @@ fn reading<'a>(theme: &Theme, label: &'a str, width: usize, value: Span<'a>) -> 
     ]
 }
 
-fn value<'a>(theme: &Theme, text: impl Into<std::borrow::Cow<'a, str>>) -> Span<'a> {
+pub fn value<'a>(theme: &Theme, text: impl Into<std::borrow::Cow<'a, str>>) -> Span<'a> {
     Span::styled(text, Style::default().fg(theme.value))
 }
 
@@ -211,7 +211,7 @@ fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 }
 
 /// A count with thousands separators, e.g. 1,204
-fn with_separators(n: u32) -> String {
+pub fn with_separators(n: u32) -> String {
     let digits = n.to_string();
     let mut text = String::new();
     for (i, digit) in digits.chars().enumerate() {
