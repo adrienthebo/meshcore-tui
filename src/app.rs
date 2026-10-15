@@ -6,35 +6,43 @@ use meshcore_rs::events::{
     EventPayload, LoginSuccessData, MsgSentInfo, PathUpdateData, SelfInfo,
 };
 
+use crate::commands::REPEATER;
 use crate::rx_log::RxLog;
 use crate::stats::{Diagnostics, PacketSignal, RadioStats};
 use crate::text::sanitize;
 use crate::update::Effect;
 
-/// What a room server lets us do, from the permissions in its login reply
-/// (companion_radio MyMesh::onContactResponse)
+/// What a repeater or room server lets us do, from the permissions in its
+/// login reply (companion_radio MyMesh::onContactResponse)
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum RoomRole {
+pub enum Role {
     Admin,
     ReadWrite,
-    /// A guest: the room pushes posts but ignores ours
+    /// A room server's guest: the room pushes posts but ignores ours
     ReadOnly,
+    /// A repeater's guest: status only, no settings
+    Guest,
 }
 
-impl RoomRole {
-    fn from_permissions(permissions: u8) -> Self {
-        match permissions {
-            1 => RoomRole::Admin,
-            2 => RoomRole::ReadOnly,
-            _ => RoomRole::ReadWrite,
+impl Role {
+    /// A repeater sends 1 for admin and 0 for a guest (simple_repeater
+    /// MyMesh::handleLoginReq). A room server sends 1 for admin, 2 for a
+    /// read-only guest and 0 otherwise (simple_room_server MyMesh)
+    fn from_permissions(contact_type: u8, permissions: u8) -> Self {
+        match (contact_type, permissions) {
+            (_, 1) => Role::Admin,
+            (REPEATER, _) => Role::Guest,
+            (_, 2) => Role::ReadOnly,
+            _ => Role::ReadWrite,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            RoomRole::Admin => "admin",
-            RoomRole::ReadWrite => "read-write",
-            RoomRole::ReadOnly => "read-only",
+            Role::Admin => "admin",
+            Role::ReadWrite => "read-write",
+            Role::ReadOnly => "read-only",
+            Role::Guest => "guest",
         }
     }
 }
@@ -174,9 +182,9 @@ pub struct App {
     pub diagnostics: Diagnostics,
     /// Packets the radio received over the air
     pub rx_log: RxLog,
-    /// Room servers that accepted our login, by public key
-    pub room_logins: HashMap<[u8; 32], RoomRole>,
-    /// Room servers we sent a login to and haven't heard back from
+    /// Repeaters and room servers that accepted our login, by public key
+    pub logins: HashMap<[u8; 32], Role>,
+    /// Repeaters and room servers we sent a login to and haven't heard back from
     pending_logins: HashSet<[u8; 32]>,
     pub should_quit: bool,
 }
@@ -203,7 +211,7 @@ impl App {
             radio_stats: RadioStats::default(),
             diagnostics: Diagnostics::default(),
             rx_log: RxLog::default(),
-            room_logins: HashMap::new(),
+            logins: HashMap::new(),
             pending_logins: HashSet::new(),
             should_quit: false,
         }
@@ -313,7 +321,7 @@ impl App {
         }
     }
 
-    /// The radio sent a login to a room server; the reply comes as a push
+    /// The radio sent a login to a repeater or room server; the reply comes as a push
     pub fn on_login_sent(&mut self, public_key: [u8; 32]) {
         self.pending_logins.insert(public_key);
         let name = self.resolve_key(&public_key);
@@ -332,11 +340,14 @@ impl App {
     }
 
     fn on_login_success(&mut self, login: &LoginSuccessData) {
-        let role = RoomRole::from_permissions(login.permissions);
+        let server = self.contact_by_prefix(&login.pubkey_prefix);
+        let contact_type = server.map_or(0, |c| c.contact_type);
+        let key = server.map(|c| c.public_key);
+        let role = Role::from_permissions(contact_type, login.permissions);
         let name = self.resolve_sender(&login.pubkey_prefix);
-        if let Some(key) = self.contact_key(&login.pubkey_prefix) {
+        if let Some(key) = key {
             self.pending_logins.remove(&key);
-            self.room_logins.insert(key, role);
+            self.logins.insert(key, role);
         }
         self.sys(&format!("Logged in to {} as {}", name, role.label()));
     }
@@ -345,17 +356,19 @@ impl App {
         let name = self.resolve_sender(prefix);
         if let Some(key) = self.contact_key(prefix) {
             self.pending_logins.remove(&key);
-            self.room_logins.remove(&key);
+            self.logins.remove(&key);
         }
         self.err(&format!("Login to {} refused", name));
     }
 
+    /// The contact whose key starts with `prefix`
+    fn contact_by_prefix(&self, prefix: &[u8; 6]) -> Option<&Contact> {
+        self.contacts.iter().find(|c| &c.public_key[..6] == prefix)
+    }
+
     /// The full key of the contact whose key starts with `prefix`
     fn contact_key(&self, prefix: &[u8; 6]) -> Option<[u8; 32]> {
-        self.contacts
-            .iter()
-            .find(|c| &c.public_key[..6] == prefix)
-            .map(|c| c.public_key)
+        self.contact_by_prefix(prefix).map(|c| c.public_key)
     }
 
     fn on_contact_message(&mut self, msg: &ContactMessage) {
@@ -441,7 +454,7 @@ impl App {
             info.suggested_timeout
         );
         self.push_packet(PacketKind::Sent, None, packet_info);
-        if self.room_logins.get(&contact.public_key) == Some(&RoomRole::ReadOnly) {
+        if self.logins.get(&contact.public_key) == Some(&Role::ReadOnly) {
             self.err(&format!(
                 "{} is read-only for us: the room won't post this",
                 sanitize(&contact.adv_name)
@@ -669,7 +682,7 @@ mod tests {
         app.on_login_sent(key);
         assert!(!app.apply_radio_event(login_success([4; 6], 0)));
         assert_eq!(last_message(&app), "Logged in to Room as read-write");
-        assert_eq!(app.room_logins[&key], RoomRole::ReadWrite);
+        assert_eq!(app.logins[&key], Role::ReadWrite);
         let count = app.messages.len();
         app.on_login_timed_out(key);
         assert_eq!(
@@ -680,10 +693,28 @@ mod tests {
     }
 
     #[test]
-    fn login_roles_come_from_the_permissions() {
-        assert_eq!(RoomRole::from_permissions(1), RoomRole::Admin);
-        assert_eq!(RoomRole::from_permissions(2), RoomRole::ReadOnly);
-        assert_eq!(RoomRole::from_permissions(0), RoomRole::ReadWrite);
+    fn room_roles_come_from_the_permissions() {
+        assert_eq!(Role::from_permissions(3, 1), Role::Admin);
+        assert_eq!(Role::from_permissions(3, 2), Role::ReadOnly);
+        assert_eq!(Role::from_permissions(3, 0), Role::ReadWrite);
+    }
+
+    #[test]
+    fn a_repeater_makes_us_admin_or_guest() {
+        assert_eq!(Role::from_permissions(REPEATER, 1), Role::Admin);
+        assert_eq!(Role::from_permissions(REPEATER, 0), Role::Guest);
+    }
+
+    #[test]
+    fn logging_in_to_a_repeater_as_guest_says_so() {
+        let mut app = App::new(0);
+        let mut repeater = contact("Hilltop", [4; 6]);
+        repeater.contact_type = REPEATER;
+        let key = repeater.public_key;
+        app.contacts.push(repeater);
+        app.apply_radio_event(login_success([4; 6], 0));
+        assert_eq!(last_message(&app), "Logged in to Hilltop as guest");
+        assert_eq!(app.logins[&key], Role::Guest);
     }
 
     #[test]
@@ -698,7 +729,7 @@ mod tests {
         });
         assert_eq!(app.messages.last().unwrap().msg_type, MsgType::Error);
         assert_eq!(last_message(&app), "Login to Room refused");
-        assert!(!app.room_logins.contains_key(&key));
+        assert!(!app.logins.contains_key(&key));
     }
 
     #[test]

@@ -71,8 +71,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "/login",
         aliases: &[],
-        args: "<room> [password]",
-        description: "log in to a room server",
+        args: "<server> [password]",
+        description: "log in to a repeater or room server",
     },
     CommandSpec {
         name: "/to",
@@ -166,9 +166,9 @@ pub enum Command {
         public_key: PublicKey,
         favorite: bool,
     },
-    /// A room server's name or public key, resolved to a contact before it goes to the radio
+    /// A repeater's or room server's name or public key, resolved to a contact before it goes to the radio
     Login {
-        room: String,
+        server: String,
         password: String,
     },
     SendLogin {
@@ -250,6 +250,9 @@ fn parse_public_key(hex: &str) -> Result<PublicKey, String> {
 /// Contact type for a companion radio (ADV_TYPE_CHAT)
 const COMPANION: u8 = 1;
 
+/// Contact type for a repeater (ADV_TYPE_REPEATER)
+pub const REPEATER: u8 = 2;
+
 /// Contact type for a room server (ADV_TYPE_ROOM)
 const ROOM: u8 = 3;
 
@@ -257,21 +260,29 @@ const ROOM: u8 = 3;
 #[derive(Clone, Copy)]
 enum Kind {
     Contact,
-    Room,
+    /// Repeaters and room servers, which take a login
+    Server,
 }
 
 impl Kind {
     fn includes(self, contact: &Contact) -> bool {
         match self {
             Kind::Contact => true,
-            Kind::Room => contact.contact_type == ROOM,
+            Kind::Server => matches!(contact.contact_type, REPEATER | ROOM),
         }
     }
 
     fn noun(self) -> &'static str {
         match self {
             Kind::Contact => "contact",
-            Kind::Room => "room server",
+            Kind::Server => "repeater or room server",
+        }
+    }
+
+    fn plural(self) -> &'static str {
+        match self {
+            Kind::Contact => "contacts",
+            Kind::Server => "repeaters and room servers",
         }
     }
 }
@@ -279,22 +290,22 @@ impl Kind {
 /// The firmware sends at most this much of a login password (BaseChatMesh::sendLogin)
 const MAX_PASSWORD_LEN: usize = 15;
 
-/// "<room> [password]": the room is the first word, the password the rest
+/// "<server> [password]": the server is the first word, the password the rest
 fn parse_login(arg: &str, spec: &CommandSpec) -> Result<Command, String> {
     let arg = arg.trim();
     if arg.is_empty() {
         return Err(spec.usage());
     }
-    let (room, password) = arg.split_once(' ').unwrap_or((arg, ""));
+    let (server, password) = arg.split_once(' ').unwrap_or((arg, ""));
     let password = password.trim();
     if password.len() > MAX_PASSWORD_LEN {
         return Err(format!(
-            "Room passwords are at most {} bytes",
+            "Login passwords are at most {} bytes",
             MAX_PASSWORD_LEN
         ));
     }
     Ok(Command::Login {
-        room: room.to_string(),
+        server: server.to_string(),
         password: password.to_string(),
     })
 }
@@ -493,7 +504,7 @@ impl App {
                 }
                 Err(e) => self.err(&e),
             },
-            Command::Login { room, password } => match self.find_contact(&room, Kind::Room) {
+            Command::Login { server, password } => match self.find_contact(&server, Kind::Server) {
                 Ok(contact) => {
                     return Some(Command::SendLogin {
                         public_key: contact.public_key,
@@ -531,10 +542,10 @@ impl App {
             several => {
                 let names: Vec<String> = several.iter().map(|c| sanitize(&c.adv_name)).collect();
                 Err(format!(
-                    "'{}' matches {} {}s: {}",
+                    "'{}' matches {} {}: {}",
                     target,
                     several.len(),
-                    kind.noun(),
+                    kind.plural(),
                     names.join(", ")
                 ))
             }
@@ -644,7 +655,7 @@ async fn set_favorite(
     })
 }
 
-/// Send a login; the room server's reply comes later as a push
+/// Send a login; the server's reply comes later as a push
 async fn send_login(
     mc: &MeshCore,
     public_key: PublicKey,
@@ -1226,15 +1237,15 @@ mod tests {
         assert_eq!(last_message(&app), "No contact matches 'Zed'");
     }
 
-    fn login(room: &str, password: &str) -> Command {
+    fn login(server: &str, password: &str) -> Command {
         Command::Login {
-            room: room.to_string(),
+            server: server.to_string(),
             password: password.to_string(),
         }
     }
 
     #[test]
-    fn parse_login_takes_the_first_word_as_the_room() {
+    fn parse_login_takes_the_first_word_as_the_server() {
         assert_eq!(
             parse_command("/login PBR/S1 hunter2"),
             Ok(login("PBR/S1", "hunter2"))
@@ -1242,27 +1253,52 @@ mod tests {
         assert_eq!(parse_command("/login PBR/S1"), Ok(login("PBR/S1", "")));
         assert_eq!(
             parse_command("/login"),
-            Err("Usage: /login <room> [password]".to_string())
+            Err("Usage: /login <server> [password]".to_string())
         );
         assert_eq!(
             parse_command("/login PBR/S1 0123456789abcdef"),
-            Err("Room passwords are at most 15 bytes".to_string())
+            Err("Login passwords are at most 15 bytes".to_string())
         );
     }
 
     #[test]
-    fn login_picks_only_room_servers() {
+    fn login_picks_only_repeaters_and_room_servers() {
         let mut app = app_with_bob_and_bobby();
         let mut room = contact("Bob's Room", [4; 6]);
         room.contact_type = ROOM;
         app.contacts.push(room);
+        let mut repeater = contact("Hilltop", [5; 6]);
+        repeater.contact_type = REPEATER;
+        app.contacts.push(repeater);
         let sent = app.apply_local(login("bob", "pw"));
         assert!(
             matches!(sent, Some(Command::SendLogin { public_key, ref password })
             if public_key[..6] == [4; 6] && password == "pw")
         );
+        let sent = app.apply_local(login("hill", ""));
+        assert!(
+            matches!(sent, Some(Command::SendLogin { public_key, .. }) if public_key[..6] == [5; 6])
+        );
         assert_eq!(app.apply_local(login("Alice", "")), None);
-        assert_eq!(last_message(&app), "No room server matches 'Alice'");
+        assert_eq!(
+            last_message(&app),
+            "No repeater or room server matches 'Alice'"
+        );
+    }
+
+    #[test]
+    fn login_to_an_ambiguous_name_lists_the_servers() {
+        let mut app = App::new(0);
+        for (name, contact_type, byte) in [("Hilltop", REPEATER, 4), ("Hill Room", ROOM, 5)] {
+            let mut server = contact(name, [byte; 6]);
+            server.contact_type = contact_type;
+            app.contacts.push(server);
+        }
+        assert_eq!(app.apply_local(login("hill", "")), None);
+        assert_eq!(
+            last_message(&app),
+            "'hill' matches 2 repeaters and room servers: Hilltop, Hill Room"
+        );
     }
 
     #[test]
