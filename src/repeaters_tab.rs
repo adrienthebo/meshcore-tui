@@ -13,7 +13,7 @@ use ratatui::{
 use crate::app::{App, RepeaterStatus, Role, StatusRequest};
 use crate::commands::REPEATER;
 use crate::contacts_tab::Step;
-use crate::radio_tab::{reading, value, with_separators, UNKNOWN};
+use crate::radio_tab::{duty_bar, fraction, reading, value, with_separators, UNKNOWN};
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
 use crate::ui::panel;
@@ -228,19 +228,36 @@ fn draw_metrics(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
     draw_readings(f, theme, " Signal ", &signal_readings, signal);
     draw_packets(f, status, theme, packets);
     let [airtime, errors] = two_columns(usage);
+    let on_air = |air_secs: u32| {
+        let total = format!("{:<8}", format_duration(air_secs, 3));
+        match fraction(air_secs, status.uptime) {
+            Some(share) => format!("{total}{:>5.1}% {}", share * 100.0, duty_bar(share, 4)),
+            None => total,
+        }
+    };
     let airtime_readings = [
-        ("TX", format_duration(status.airtime, 3)),
-        ("RX", format_duration(status.rx_airtime, 3)),
+        ("TX", on_air(status.airtime)),
+        ("RX", on_air(status.rx_airtime)),
     ];
     draw_readings(f, theme, " Airtime ", &airtime_readings, airtime);
-    let recv_errors = status
-        .recv_errors
-        .map_or(UNKNOWN.to_string(), with_separators);
+    // Each packet the radio tried to decode was either received or an error
+    let recv_errors = status.recv_errors.map_or(UNKNOWN.to_string(), |errors| {
+        with_share(errors, status.nb_recv.saturating_add(errors))
+    });
     let error_readings = [
         ("RX errors", recv_errors),
         ("Flags", format!("0x{:04x}", status.err_events)),
     ];
     draw_readings(f, theme, " Errors ", &error_readings, errors);
+}
+
+/// A count and its share of `whole`, e.g. "412 (5.0%)"; just the count when
+/// `whole` is zero
+fn with_share(count: u32, whole: u32) -> String {
+    match fraction(count, whole) {
+        Some(share) => format!("{} ({:.1}%)", with_separators(count), share * 100.0),
+        None => with_separators(count),
+    }
 }
 
 /// Two panels side by side, equal width
@@ -270,7 +287,8 @@ fn draw_readings(
     f.render_widget(readings, area);
 }
 
-/// Packets sent, received and duplicated, by flood and direct
+/// Packets sent, received and duplicated, by flood and direct; duplicates
+/// are counted among the packets received
 fn draw_packets(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
     let muted = Style::default().fg(theme.muted);
     let row = |label: &'static str, sent: u32, received: u32, duplicates: u16| {
@@ -278,7 +296,7 @@ fn draw_packets(f: &mut Frame, status: &StatusData, theme: &Theme, area: Rect) {
             "{:<10}{:<11}{}",
             with_separators(sent),
             with_separators(received),
-            with_separators(duplicates.into())
+            with_share(duplicates.into(), received)
         );
         Line::from_iter(reading(
             theme,
@@ -410,6 +428,13 @@ mod tests {
     fn says_when_a_status_request_goes_unanswered_and_keeps_the_last() {
         let app = app_with_status(true, Some(StatusRequest::Unanswered));
         insta::assert_snapshot!(render_status(&app));
+    }
+
+    #[test]
+    fn a_share_needs_a_whole() {
+        assert_eq!(with_share(412, 8311), "412 (5.0%)");
+        assert_eq!(with_share(1204, 1204), "1,204 (100.0%)");
+        assert_eq!(with_share(0, 0), "0");
     }
 
     #[test]

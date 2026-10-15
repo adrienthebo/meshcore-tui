@@ -146,13 +146,14 @@ fn draw_signal(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     draw_readings(f, theme, " Signal ", rows, area);
 }
 
-/// Seconds on air as a share of uptime; None before the radio has been up a second
-fn duty_cycle(air_secs: u32, uptime_secs: u32) -> Option<f64> {
-    (uptime_secs > 0).then(|| air_secs as f64 / uptime_secs as f64)
+/// `part` as a fraction of `whole`, e.g. seconds on air of uptime; None when
+/// `whole` is zero
+pub fn fraction(part: u32, whole: u32) -> Option<f64> {
+    (whole > 0).then(|| part as f64 / whole as f64)
 }
 
 /// A bar `width` cells long at 100%, in eighths of a cell; anything above zero shows
-fn duty_bar(fraction: f64, width: usize) -> String {
+pub fn duty_bar(fraction: f64, width: usize) -> String {
     const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
     let eighths = (fraction.clamp(0.0, 1.0) * width as f64 * 8.0).round() as usize;
     let eighths = if fraction > 0.0 { eighths.max(1) } else { 0 };
@@ -175,7 +176,7 @@ fn draw_airtime(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
             area,
         );
     };
-    let share = |air_secs: u32| match uptime.and_then(|up| duty_cycle(air_secs, up)) {
+    let share = |air_secs: u32| match uptime.and_then(|up| fraction(air_secs, up)) {
         Some(fraction) => format!("{:>5.1}%  {}", fraction * 100.0, duty_bar(fraction, 10)),
         None => UNKNOWN.to_string(),
     };
@@ -637,9 +638,9 @@ mod tests {
     }
 
     #[test]
-    fn duty_cycle_needs_uptime() {
-        assert_eq!(duty_cycle(12, 0), None);
-        assert_eq!(duty_cycle(30, 600), Some(0.05));
+    fn fraction_needs_a_whole() {
+        assert_eq!(fraction(12, 0), None);
+        assert_eq!(fraction(30, 600), Some(0.05));
     }
 
     #[test]
