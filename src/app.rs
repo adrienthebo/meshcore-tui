@@ -497,6 +497,24 @@ const MAX_PACKETS: usize = 100;
 const MAX_ADVERTS: usize = 100;
 const MAX_DISCOVERED: usize = 100;
 
+/// The contact flags bit the radio marks favorites with; it keeps favorites
+/// when its contact table is full (BaseChatMesh.cpp). The other bits are
+/// telemetry permissions (onContactRequest, companion_radio/MyMesh.cpp)
+const FAVORITE_FLAG: u8 = 1;
+
+pub fn is_favorite(contact: &Contact) -> bool {
+    contact.flags & FAVORITE_FLAG != 0
+}
+
+/// Contact flags with the favorite bit set or cleared and the others kept
+pub fn with_favorite(flags: u8, favorite: bool) -> u8 {
+    if favorite {
+        flags | FAVORITE_FLAG
+    } else {
+        flags & !FAVORITE_FLAG
+    }
+}
+
 fn now() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
@@ -982,5 +1000,18 @@ mod tests {
         assert_eq!(app.messages[0].msg_type, MsgType::System);
         assert_eq!(app.messages[1].sender, "ERR");
         assert_eq!(app.messages[1].msg_type, MsgType::Error);
+    }
+
+    #[test]
+    fn favorites_are_flag_bit_zero_and_setting_it_keeps_the_other_bits() {
+        let mut contact = Contact {
+            flags: 0b110,
+            ..Default::default()
+        };
+        assert!(!is_favorite(&contact));
+        contact.flags = with_favorite(contact.flags, true);
+        assert_eq!(contact.flags, 0b111);
+        assert!(is_favorite(&contact));
+        assert_eq!(with_favorite(contact.flags, false), 0b110);
     }
 }

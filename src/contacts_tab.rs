@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{AdvertEntry, App, DiscoveredNode, Route};
+use crate::app::{is_favorite, AdvertEntry, App, DiscoveredNode, Route};
 use crate::contact_menu::ContactMenu;
 use crate::text::{format_duration, sanitize};
 use crate::theme::Theme;
@@ -283,6 +283,7 @@ fn draw_contacts_tab(
 /// A contact's table row; `heard` is when it advertised, as unix time
 fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
     Row::new([
+        if is_favorite(c) { FAVORITE } else { "" }.to_string(),
         sanitize(&c.adv_name),
         contact_type_label(c.contact_type).to_string(),
         c.prefix_hex()[..8].to_string(),
@@ -292,16 +293,20 @@ fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
     ])
 }
 
-/// The column titles above contact rows, naming the age column
-fn contact_header(theme: &Theme, age: &'static str) -> Row<'static> {
-    Row::new(["Name", "Type", "Key", age, "Hops", "Position"]).style(
+/// The column titles above contact rows, naming the favorites and age columns
+fn contact_header(theme: &Theme, favorite: &'static str, age: &'static str) -> Row<'static> {
+    Row::new([favorite, "Name", "Type", "Key", age, "Hops", "Position"]).style(
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
     )
 }
 
-const CONTACT_WIDTHS: [Constraint; 6] = [
+/// Marks a favorite, and heads the column of marks
+const FAVORITE: &str = "★";
+
+const CONTACT_WIDTHS: [Constraint; 7] = [
+    Constraint::Length(1),
     Constraint::Fill(1),
     Constraint::Length(9),
     Constraint::Length(8),
@@ -333,7 +338,7 @@ fn draw_contact_table(
     };
     let table = Table::new(rows, CONTACT_WIDTHS)
         .column_spacing(CONTACT_SPACING)
-        .header(contact_header(theme, "Last advert"))
+        .header(contact_header(theme, FAVORITE, "Last advert"))
         .style(Style::default().fg(theme.text))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
         .block(panel(
@@ -367,7 +372,8 @@ fn draw_discovered(
     };
     let table = Table::new(rows, CONTACT_WIDTHS)
         .column_spacing(CONTACT_SPACING)
-        .header(contact_header(theme, "Heard"))
+        // Discovered nodes aren't contacts, so none is a favorite
+        .header(contact_header(theme, "", "Heard"))
         .style(Style::default().fg(theme.muted))
         .row_highlight_style(Style::default().fg(theme.selected_fg).bg(theme.selected_bg))
         .block(panel(
@@ -463,6 +469,7 @@ mod tests {
         hilltop.contact_type = 2;
         hilltop.last_advert = (NOW - 3_780) as u32;
         hilltop.path_len = -1;
+        hilltop.flags = 1;
         app.contacts = vec![hilltop, contact("Never heard", [0xc3; 6]), alice];
         let mut alice_key = [0; 32];
         alice_key[..6].copy_from_slice(&[0xa1; 6]);

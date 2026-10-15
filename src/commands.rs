@@ -1,7 +1,7 @@
 use meshcore_rs::events::{BatteryInfo, ChannelInfoData, Contact, MsgSentInfo, RadioStatsData};
 use meshcore_rs::{MeshCore, PublicKey};
 
-use crate::app::{App, ChannelEntry};
+use crate::app::{with_favorite, App, ChannelEntry};
 use crate::stats::{DiagnosticsReading, PollNotice};
 use crate::text::{sanitize, url_decode};
 use crate::update::{Effect, Recipient};
@@ -154,6 +154,11 @@ pub enum Command {
     RemoveContact {
         name: String,
         public_key: PublicKey,
+    },
+    /// Mark a contact as a favorite, or unmark it
+    SetFavorite {
+        public_key: PublicKey,
+        favorite: bool,
     },
     To(String),
     SwitchChannel(u8),
@@ -539,6 +544,35 @@ async fn remove_contact(
     Ok(Outcome::ContactRemoved { name, contacts })
 }
 
+/// Mark or unmark a contact as a favorite, then reload the contact list. The
+/// radio only updates a contact as a whole, so this writes back the radio's
+/// own copy of it with only the favorite bit changed
+async fn set_favorite(
+    mc: &MeshCore,
+    public_key: PublicKey,
+    favorite: bool,
+) -> Result<Outcome, String> {
+    let commands = mc.commands().lock().await;
+    let mut contact = commands
+        .get_contact_by_key(&public_key)
+        .await
+        .map_err(|e| format!("Favorite: {}", e))?;
+    contact.flags = with_favorite(contact.flags, favorite);
+    commands
+        .add_contact(&contact)
+        .await
+        .map_err(|e| format!("Favorite: {}", e))?;
+    let contacts = commands
+        .get_contacts(0)
+        .await
+        .map_err(|e| format!("Contacts: {}", e))?;
+    Ok(Outcome::FavoriteSet {
+        name: contact.adv_name,
+        favorite,
+        contacts,
+    })
+}
+
 /// What the radio returned for a command or sent message, for the app to apply
 #[derive(Debug)]
 pub enum Outcome {
@@ -552,6 +586,11 @@ pub enum Outcome {
     ContactImported,
     ContactRemoved {
         name: String,
+        contacts: Vec<Contact>,
+    },
+    FavoriteSet {
+        name: String,
+        favorite: bool,
         contacts: Vec<Contact>,
     },
     AdvertSent,
@@ -602,6 +641,10 @@ pub async fn run_radio_command(mc: &MeshCore, cmd: Command) -> Result<Outcome, S
             .map(|_| Outcome::ContactImported)
             .map_err(|e| format!("Import contact: {}", e)),
         Command::RemoveContact { name, public_key } => remove_contact(mc, name, public_key).await,
+        Command::SetFavorite {
+            public_key,
+            favorite,
+        } => set_favorite(mc, public_key, favorite).await,
         Command::Advert => mc
             .commands()
             .lock()
@@ -661,6 +704,19 @@ impl App {
             Outcome::ContactImported => self.sys("Contact card imported"),
             Outcome::ContactRemoved { name, contacts } => {
                 self.sys(&format!("Deleted contact {}", sanitize(&name)));
+                self.set_contacts(contacts);
+            }
+            Outcome::FavoriteSet {
+                name,
+                favorite,
+                contacts,
+            } => {
+                let name = sanitize(&name);
+                self.sys(&if favorite {
+                    format!("Added {} to favorites", name)
+                } else {
+                    format!("Removed {} from favorites", name)
+                });
                 self.set_contacts(contacts);
             }
             Outcome::AdvertSent => self.sys("Advertisement sent"),
@@ -749,6 +805,14 @@ impl App {
         let cmd = Command::AddContact(ContactToAdd(node.contact.clone()));
         let effect = Effect::Radio(self.apply_local(cmd)?);
         self.when_connected(effect)
+    }
+
+    /// Mark the contact with this public key as a favorite, or unmark it
+    pub fn set_favorite(&mut self, public_key: PublicKey, favorite: bool) -> Option<Effect> {
+        self.when_connected(Effect::Radio(Command::SetFavorite {
+            public_key,
+            favorite,
+        }))
     }
 
     /// The effect, or None and an error when there's no radio to carry it out
@@ -1059,6 +1123,26 @@ mod tests {
         }));
         assert_eq!(last_message(&app), "Deleted contact Bob");
         assert_eq!(app.contacts.len(), 1);
+    }
+
+    #[test]
+    fn a_favorite_change_says_which_way_and_shows_in_the_reloaded_list() {
+        let mut app = app_with_bob_and_bobby();
+        let mut bob = contact("Bob", [1; 6]);
+        bob.flags = 1;
+        app.apply_outcome(Ok(Outcome::FavoriteSet {
+            name: "Bob".to_string(),
+            favorite: true,
+            contacts: vec![bob],
+        }));
+        assert_eq!(last_message(&app), "Added Bob to favorites");
+        assert_eq!(app.contacts[0].flags, 1);
+        app.apply_outcome(Ok(Outcome::FavoriteSet {
+            name: "Bob".to_string(),
+            favorite: false,
+            contacts: vec![contact("Bob", [1; 6])],
+        }));
+        assert_eq!(last_message(&app), "Removed Bob from favorites");
     }
 
     #[test]

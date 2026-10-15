@@ -2,7 +2,7 @@ use crossterm::event::KeyEvent;
 use meshcore_rs::events::Contact;
 use ratatui::{layout::Rect, Frame};
 
-use crate::app::App;
+use crate::app::{is_favorite, App};
 use crate::choices::{Choices, ChoicesKey, Row};
 use crate::popover::Popover;
 use crate::text::sanitize;
@@ -14,12 +14,16 @@ use crate::view::{KeyResult, View};
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Choice {
     Message,
+    /// Mark the contact as a favorite (true) or unmark it
+    Favorite(bool),
 }
 
 impl Choice {
     fn action(self, contact: &Contact) -> Action {
+        let key = contact.public_key;
         match self {
-            Choice::Message => Action::MessageContact(contact.public_key),
+            Choice::Message => Action::MessageContact(key),
+            Choice::Favorite(favorite) => Action::SetFavorite { key, favorite },
         }
     }
 }
@@ -27,7 +31,7 @@ impl Choice {
 /// The menu for a contact of this type (ADV_TYPE_*, helpers/AdvertDataHelpers.h):
 /// what only that type offers, a divider, then what every contact offers.
 /// Actions that aren't built yet show disabled
-fn rows(contact_type: u8) -> Vec<Row<Choice>> {
+fn rows(contact_type: u8, favorite: bool) -> Vec<Row<Choice>> {
     let mut rows = match contact_type {
         1 => vec![Row::Enabled("Message", Choice::Message)],
         2 => vec![Row::Disabled("Log in"), Row::Disabled("Status")],
@@ -37,7 +41,12 @@ fn rows(contact_type: u8) -> Vec<Row<Choice>> {
     if !rows.is_empty() {
         rows.push(Row::Divider);
     }
-    rows.extend([Row::Disabled("Favorite"), Row::Disabled("Delete")]);
+    rows.push(if favorite {
+        Row::Enabled("Unfavorite", Choice::Favorite(false))
+    } else {
+        Row::Enabled("Favorite", Choice::Favorite(true))
+    });
+    rows.push(Row::Disabled("Delete"));
     rows
 }
 
@@ -55,7 +64,7 @@ impl ContactMenu {
     pub fn new(contact: &Contact) -> Self {
         Self {
             key: contact.public_key,
-            choices: Choices::new(rows(contact.contact_type)),
+            choices: Choices::new(rows(contact.contact_type, is_favorite(contact))),
         }
     }
 
@@ -126,25 +135,51 @@ mod tests {
     fn each_type_offers_its_own_actions_then_the_shared_ones() {
         let shared = [
             Row::Divider,
-            Row::Disabled("Favorite"),
+            Row::Enabled("Favorite", Choice::Favorite(true)),
             Row::Disabled("Delete"),
         ];
         let with_shared = |own: &[Row<Choice>]| [own, &shared].concat();
         assert_eq!(
-            rows(1),
+            rows(1, false),
             with_shared(&[Row::Enabled("Message", Choice::Message)])
         );
         assert_eq!(
-            rows(2),
+            rows(2, false),
             with_shared(&[Row::Disabled("Log in"), Row::Disabled("Status")])
         );
         assert_eq!(
-            rows(3),
+            rows(3, false),
             with_shared(&[Row::Disabled("Log in"), Row::Disabled("Read posts")])
         );
         // Nothing of their own, so nothing to divide
-        assert_eq!(rows(4), shared[1..]);
-        assert_eq!(rows(0), shared[1..]);
+        assert_eq!(rows(4, false), shared[1..]);
+        assert_eq!(rows(0, false), shared[1..]);
+    }
+
+    #[test]
+    fn a_favorite_offers_to_unfavorite() {
+        assert_eq!(
+            rows(4, true),
+            [
+                Row::Enabled("Unfavorite", Choice::Favorite(false)),
+                Row::Disabled("Delete"),
+            ]
+        );
+    }
+
+    #[test]
+    fn enter_on_favorite_asks_to_mark_the_contact() {
+        let app = app_with_contacts(1);
+        let key = app.contacts[0].public_key;
+        let mut menu = ContactMenu::new(&app.contacts[0]);
+        press(&mut menu, &app, KeyCode::Down);
+        assert_eq!(
+            press(&mut menu, &app, KeyCode::Enter),
+            KeyResult::Action(Action::SetFavorite {
+                key,
+                favorite: true
+            })
+        );
     }
 
     #[test]

@@ -49,6 +49,11 @@ pub enum Action {
     MessageContact([u8; 32]),
     /// Add the discovered node with this public key as a contact
     AddDiscovered([u8; 32]),
+    /// Mark the contact with this public key as a favorite, or unmark it
+    SetFavorite {
+        key: [u8; 32],
+        favorite: bool,
+    },
 }
 
 /// Apply a message to the app and what's on screen; returns the effects it calls for
@@ -94,6 +99,9 @@ fn apply_action(app: &mut App, ui: &mut Ui, action: Action) -> Vec<Effect> {
             }
         }
         Action::AddDiscovered(key) => return app.add_discovered(&key).into_iter().collect(),
+        Action::SetFavorite { key, favorite } => {
+            return app.set_favorite(key, favorite).into_iter().collect()
+        }
     }
     Vec::new()
 }
@@ -252,6 +260,24 @@ mod tests {
         assert!(matches!(
             apply_action(&mut app, &mut ui, Action::AddDiscovered(bob.public_key))[..],
             [Effect::Radio(Command::AddContact(_))]
+        ));
+    }
+
+    #[test]
+    fn set_favorite_asks_the_radio_once_connected() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        let action = || Action::SetFavorite {
+            key: [7; 32],
+            favorite: true,
+        };
+        assert!(apply_action(&mut app, &mut ui, action()).is_empty());
+        app.connected = true;
+        assert!(matches!(
+            apply_action(&mut app, &mut ui, action())[..],
+            [Effect::Radio(Command::SetFavorite {
+                public_key: [7, ..],
+                favorite: true
+            })]
         ));
     }
 }
