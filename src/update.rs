@@ -1,8 +1,10 @@
 use crossterm::event::KeyEvent;
 use meshcore_rs::events::{Contact, EventPayload};
+use tracing::Level;
 
 use crate::app::App;
 use crate::commands::{Command, Outcome};
+use crate::radio_log::RadioLogLine;
 use crate::view::Ui;
 
 /// Something that happened, for `update` to apply to the app
@@ -13,6 +15,8 @@ pub enum Msg {
     EffectDone(Result<Outcome, String>),
     /// The stats poll interval elapsed
     StatsPollDue,
+    /// meshcore-rs logged a warning or error
+    RadioLog(RadioLogLine),
 }
 
 /// Who an outgoing message is addressed to
@@ -85,6 +89,14 @@ pub fn update(app: &mut App, ui: &mut Ui, msg: Msg) -> Vec<Effect> {
             }
             effects
         }
+        Msg::RadioLog(line) => {
+            if line.level == Level::ERROR {
+                app.err(&line.text);
+            } else {
+                app.sys(&line.text);
+            }
+            Vec::new()
+        }
     }
 }
 
@@ -131,6 +143,23 @@ mod tests {
             [Effect::Alert]
         ));
         assert_eq!(last_message(&app), "hi");
+    }
+
+    #[test]
+    fn radio_log_errors_show_as_errors_and_warnings_as_system_lines() {
+        let (mut app, mut ui) = (App::new(0), test_ui());
+        for (level, text) in [(Level::ERROR, "too short"), (Level::WARN, "retrying")] {
+            let line = RadioLogLine {
+                level,
+                text: text.to_string(),
+            };
+            assert!(update(&mut app, &mut ui, Msg::RadioLog(line)).is_empty());
+        }
+        let logged: Vec<_> = app.messages[app.messages.len() - 2..]
+            .iter()
+            .map(|m| (m.sender.as_str(), m.text.as_str()))
+            .collect();
+        assert_eq!(logged, [("ERR", "too short"), ("SYS", "retrying")]);
     }
 
     #[test]

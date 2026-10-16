@@ -7,6 +7,7 @@ mod input;
 mod overview;
 mod popover;
 mod radio;
+mod radio_log;
 mod radio_tab;
 mod rx_log;
 mod rx_log_tab;
@@ -32,9 +33,11 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use app::App;
 use radio::{connect, run_radio_effects, setup_subscriptions};
+use radio_log::RadioLog;
 use theme::ThemeName;
 use ui::draw;
 use update::{update, Effect, Msg};
@@ -102,18 +105,23 @@ fn dispatch(app: &mut App, ui: &mut Ui, msg: Msg, radio: Option<&UnboundedSender
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // Tracing: suppress all output by default (TUI uses the terminal).
-    // Set MESHCORE_LOG=1 to write debug logs to meshcore-chat.log
-    if std::env::var("MESHCORE_LOG").is_ok() {
-        let log_file = std::fs::File::create("meshcore-chat.log").ok();
-        if let Some(file) = log_file {
-            tracing_subscriber::fmt()
-                .with_env_filter("meshcore_rs=debug,btleplug=warn")
+    // Tracing: nothing goes to the terminal, which the TUI uses. meshcore-rs
+    // warnings and errors go to the message log.
+    // Set MESHCORE_LOG=1 to also write debug logs to meshcore-chat.log
+    let log_file = std::env::var("MESHCORE_LOG")
+        .ok()
+        .and_then(|_| std::fs::File::create("meshcore-chat.log").ok())
+        .map(|file| {
+            tracing_subscriber::fmt::layer()
                 .with_writer(std::sync::Mutex::new(file))
                 .with_ansi(false)
-                .init();
-        }
-    }
+                .with_filter(EnvFilter::new("meshcore_rs=debug,btleplug=warn"))
+        });
+    let (radio_log_tx, mut radio_log) = mpsc::unbounded_channel();
+    tracing_subscriber::registry()
+        .with(log_file)
+        .with(RadioLog::new(radio_log_tx).with_filter(radio_log::shown()))
+        .init();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -149,6 +157,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         while let Ok(outcome) = outcomes.try_recv() {
             dispatch(&mut app, &mut ui, Msg::EffectDone(outcome), radio.as_ref());
+        }
+        while let Ok(line) = radio_log.try_recv() {
+            dispatch(&mut app, &mut ui, Msg::RadioLog(line), radio.as_ref());
         }
         if Instant::now() >= next_stats_poll {
             next_stats_poll = Instant::now() + STATS_POLL_INTERVAL;
