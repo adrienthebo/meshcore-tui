@@ -282,7 +282,8 @@ fn draw_contacts_tab(
     }
 }
 
-/// A contact's table row; `heard` is when it advertised, as unix time
+/// A contact's table row; `heard` is when it advertised, as unix time, and
+/// "Updated" is when the radio last heard or changed it, by the radio's clock
 fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
     Row::new([
         if is_favorite(c) { FAVORITE } else { "" }.to_string(),
@@ -290,6 +291,7 @@ fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
         contact_type_label(c.contact_type).to_string(),
         c.prefix_hex()[..8].to_string(),
         advert_age(heard, now),
+        advert_age(c.last_modification_timestamp, now),
         hops_label(c.path_len),
         position_label(c),
     ])
@@ -297,7 +299,10 @@ fn contact_row(c: &Contact, heard: u32, now: i64) -> Row<'static> {
 
 /// The column titles above contact rows, naming the favorites and age columns
 fn contact_header(theme: &Theme, favorite: &'static str, age: &'static str) -> Row<'static> {
-    Row::new([favorite, "Name", "Type", "Key", age, "Hops", "Position"]).style(
+    Row::new([
+        favorite, "Name", "Type", "Key", age, "Updated", "Hops", "Position",
+    ])
+    .style(
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -307,11 +312,12 @@ fn contact_header(theme: &Theme, favorite: &'static str, age: &'static str) -> R
 /// Marks a favorite, and heads the column of marks
 const FAVORITE: &str = "★";
 
-const CONTACT_WIDTHS: [Constraint; 7] = [
+const CONTACT_WIDTHS: [Constraint; 8] = [
     Constraint::Length(1),
     Constraint::Fill(1),
     Constraint::Length(9),
     Constraint::Length(8),
+    Constraint::Length(11),
     Constraint::Length(11),
     Constraint::Length(5),
     Constraint::Length(19),
@@ -464,12 +470,15 @@ mod tests {
         let mut app = App::new(0);
         let mut alice = contact("Alice", [0xa1; 6]);
         alice.last_advert = (NOW - 300) as u32;
+        alice.last_modification_timestamp = (NOW - 240) as u32;
         alice.path_len = 2;
         alice.adv_lat = 52_008_900;
         alice.adv_lon = 4_353_100;
         let mut hilltop = contact("Hilltop", [0xb2; 6]);
         hilltop.contact_type = 2;
         hilltop.last_advert = (NOW - 3_780) as u32;
+        // Favoriting it after the advert moved its update time
+        hilltop.last_modification_timestamp = (NOW - 60) as u32;
         hilltop.path_len = -1;
         hilltop.flags = 1;
         app.contacts = vec![hilltop, contact("Never heard", [0xc3; 6]), alice];
@@ -491,7 +500,7 @@ mod tests {
         insta::assert_snapshot!(render(
             &app_with_heard_contacts(),
             &ContactsTab::default(),
-            80,
+            100,
             26
         ));
     }
@@ -586,7 +595,7 @@ mod tests {
         let (mut tab, app) = (ContactsTab::default(), app_with_heard_contacts());
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Enter);
-        insta::assert_snapshot!(render(&app, &tab, 80, 26));
+        insta::assert_snapshot!(render(&app, &tab, 100, 26));
     }
 
     #[test]
@@ -613,7 +622,7 @@ mod tests {
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Down);
         press(&mut tab, &app, KeyCode::Enter);
-        insta::assert_snapshot!(render(&app, &tab, 80, 26));
+        insta::assert_snapshot!(render(&app, &tab, 100, 26));
         assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Handled);
         assert_eq!(tab.key_hints(), ["↑↓=choose", "Enter=select", "Esc=close"]);
         assert_eq!(press(&mut tab, &app, KeyCode::Esc), KeyResult::Handled);
